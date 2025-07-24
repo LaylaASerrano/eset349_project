@@ -31,13 +31,13 @@ delay_ms
 
 ms_outer_loop
     CMP r0, #0
-    BEQ ms_done                              ; if r0 == 0 exit loop
+    beq ms_done                              ; if r0 == 0 exit loop
    
     MOV r1, #8000                            ; need to adjust this when we flash and test
 
 ms_inner_loop
     SUBS r1, r1, #1                          ; decrement r1 by 1
-    BNE ms_inner_loop                        ; if != 0 
+    bne ms_inner_loop                        ; if != 0 
    
     SUBS r0, r0 , #1                         ; decrement r0 by 1
     B ms_outer_loop                          ; repeat outer loop again
@@ -54,13 +54,13 @@ delay_us
 
 us_outer_loop
     CMP r0, #0
-    BEQ us_done                             ; if r0 == 0 i.e. if done exit
+    beq us_done                             ; if r0 == 0 i.e. if done exit
    
     MOV r1, #8                              ; we need to adjust this up or down depending on the actual clock
 
 us_inner_loop
     SUBS r1, r1, #1                         ; decrement r1 by 1
-    BNE us_inner_loop                       ; loop until r1 == 0
+    bne us_inner_loop                       ; loop until r1 == 0
 
     SUBS r0, r0, #1                         ; decrement r0 by 1
     B us_outer_loop                         ; repeat outer again
