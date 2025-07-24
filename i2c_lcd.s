@@ -163,7 +163,87 @@ lcd_send_data FUNCTION
 ; -------------------------------
 ; lcd_render: draw paddles and ball based on game state
 ; -------------------------------
+lcd_render FUNCTION
+        ; Clear display
+        MOV r0, #0x01
+        BL lcd_send_cmd
 
+        ; Load game state
+        LDR r6, =paddleLeftY
+        LDR r6, [r6]
+        LDR r7, =paddleRightY
+        LDR r7, [r7]
+        LDR r8, =ballX
+        LDR r8, [r8]
+        LDR r9, =ballY
+        LDR r9, [r9]
+
+        ; Row loop
+        MOV r4, #0
+row_loop
+        CMP r4, #4
+        BEQ render_done
+
+        ; Column loop
+        MOV r5, #0
+col_loop
+        CMP r5, #16
+        BEQ next_row
+
+        ; Default char
+        MOV r0, #' '
+
+        ; Left paddle
+        CMP r5, #0
+        BNE check_right
+        CMP r4, r6
+        BNE check_right
+        MOV r0, #'|'
+
+check_right
+        CMP r5, #15
+        BNE check_ball
+        CMP r4, r7
+        BNE check_ball
+        MOV r0, #'|'
+
+check_ball
+        CMP r5, r8
+        BNE send_char
+        CMP r4, r9
+        BNE send_char
+        MOV r0, #'O'
+
+send_char
+        BL lcd_send_data
+        ADD r5, r5, #1
+        B col_loop
+
+next_row
+        ; Move cursor to next row start
+        CMP r4, #0
+        BNE row1done
+        MOV r0, #0xC0
+        BL lcd_send_cmd
+row1done
+        CMP r4, #1
+        BNE row2done
+        MOV r0, #0x94
+        BL lcd_send_cmd
+row2done
+        CMP r4, #2
+        BNE row3done
+        MOV r0, #0xD4
+        BL lcd_send_cmd
+row3done
+        ADD r4, R4, #1
+        B row_loop
+
+render_done
+        BX LR
+        ENDP
+
+END
 
 
 
