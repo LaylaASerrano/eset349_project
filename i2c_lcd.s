@@ -34,8 +34,9 @@ AREA i2c_lcd, CODE, READONLY
         IMPORT ballY
 LCD_ADDR EQU 0x27                           ; Need accurate i2c address of backpack
 
-
+; -------------------------------
 ; i2c_init: enable gpiob | enable i2c1 | configure pb8/pb9 
+; -------------------------------
 
     ; enable clocks
     
@@ -91,7 +92,9 @@ LCD_ADDR EQU 0x27                           ; Need accurate i2c address of backp
     ENDP
 
 
+; -------------------------------
 ; helper func
+; -------------------------------
 
 send_i2c_byte                                                
         PUSH {r1, r2, lr}                          
@@ -100,22 +103,66 @@ send_i2c_byte
     wait_TXE 
         LDR r2, [r1, #0x14]                         ; i2c_sr1
         TST r2, #(1 << 7)                           ; check TXE flag set
-        BEQ wait_TXE                                ; if not set, wait
+        BEQ wait_TXE                                ; if not sent wait
         STRB r0, [r1, #0x10]                        ; i2c_dr
 
     wait_BTF
         LDR r2, [r1, #0x14]                         ; i2c_sr1
         TST r2, #(1 << 2)                           ; check BTF flag set
-        BEQ wait_BTF                                ; if not set, wait
+        BEQ wait_BTF                                ; if not set wait
         POP {r1, r2, pc}                            ; return from
 
 
+; -------------------------------
+; send comamand
+; -------------------------------
 
+lcd_send_cmd function
+    PUSH {r1, r2, LR}                               ; save registers
+    LDR r1, =0x40005400                             ; load i2c1 base
 
+    ; generate start condition
+    LDR r2, [r1]                          
+    ORR r2, r2, #(1 << 8)                           ; set start bit
+    STR r2, [r1] 
 
+    wait_SB
+    LDR r2, [r1, #0x14]
+    TST r2, #(1 << 0)                               ; check SB flag set
+    BEQ wait_SB                                     ; if not set, wait
 
+    ; send address with write bit
+    MOV r2, #(LCD_ADDR << 1)                        ; shift address left and set write bit
+    STRB r2, [r1, #0x10]
 
+    wait_ADDR
+    LDR r2, [r1, #0x14]
+    TST r2, #(1 << 1)                               ; check ADDR flag set
+    BEQ wait_ADDR                                   ; if not set wait
+    LDR r2, [r1, #0x18]                             ; clear ADDR flag
 
+    ; send command byte
+    BL send_i2c_byte
+
+    ; generate stop condition
+    LDR r2, [r1]                                    ; read i2c1 base
+    ORR r2, r2, #(1 << 9)                           ; set stop bit
+    STR r2, [r1]                                    ; write back 
+    
+    POP {r1, r2, PC}                                ; restore registers and return
+    ENDP
+
+; -------------------------------
+; send data
+; -------------------------------
+lcd_send_data FUNCTION
+    BL lcd_send_cmd
+    BX LR
+    ENDP
+
+; -------------------------------
+; lcd_render: draw paddles and ball based on game state
+; -------------------------------
 
 
 
