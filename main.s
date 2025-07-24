@@ -33,19 +33,23 @@ __Vectors
 Reset_Handler 
 
         ;perpherals
-        BL gpio_init ;dontchange
-        BL i2C_init 
-        BL usart_init 
-        BL delay_init
-        BL game_init  ;dontchange
+        bl gpio_init
+        bl game_init
+        ;bl i2c_init
+        ;bl usart_init
+        ;bl delay_init (optional)
+        b main_loop
 
 main_loop 
-        BL read_buttons
-        BL game_update
-        BL send_recive_wifi 
-        B main_loop
+        bl read_buttons
+        ;bl send_input_uart
+        ;bl recv_input_uart
+        bl game_update
+        ;bl lcd_render
+        b  main_loop
 
-        END
+        endp
+        end
 
         
 
