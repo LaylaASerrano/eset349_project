@@ -18,3 +18,17 @@
 ; TODO: lcd_render:
 ;     - Convert game state (paddles, ball) into LCD characters
 ;     - Call lcd_send_data repeatedly to write to LCD
+
+; -------------------------------
+
+    AREA |.text|, CODE, READONLY
+
+    EXPORT LCD_SendCommand
+LCD_SendCommand         ; load lcd w i2c add
+    LDR r1, =0x27       ; replace w I2C address
+    BL I2C_Start        ; Generate I²C start condition
+    BL I2C_WriteByte    ; R0 already has data, send it
+    BL I2C_Stop         ; Generate stop condition
+    BX LR
+
+
