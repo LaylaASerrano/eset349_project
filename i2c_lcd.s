@@ -21,14 +21,110 @@
 
 ; -------------------------------
 
-    AREA |.text|, CODE, READONLY
+; Int statements 
+AREA i2c_lcd, CODE, READONLY
+        EXPORT i2c_init
+        EXPORT lcd_send_cmd
+        EXPORT lcd_send_data
+        EXPORT lcd_render
 
-    EXPORT LCD_SendCommand
-LCD_SendCommand         ; load lcd w i2c add
-    LDR r1, =0x27       ; replace w I2C address
-    BL I2C_Start        ; Generate I²C start condition
-    BL I2C_WriteByte    ; R0 already has data, send it
-    BL I2C_Stop         ; Generate stop condition
+        IMPORT paddleLeftY
+        IMPORT paddleRightY
+        IMPORT ballX
+        IMPORT ballY
+LCD_ADDR EQU 0x27                           ; Need accurate i2c address of backpack
+
+
+; i2c_init: enable gpiob | enable i2c1 | configure pb8/pb9 
+
+    ; enable clocks
+    
+    ; GPIOB clock
+    LDR r0, = 0x40023830                ; RCC_AHB1ENR
+    LDR r1, [r0]
+    ORR r1, r1, #(1 << 1)               ; set bit to enable gpiob
+    STR r1, [r0]
+
+    ; i2c1  clock
+    LDR r0, =40023840                   ; RCC_APB1ENR
+    LDR r1, [r0]
+    ORR r1, r1, #(1 << 21)              ; set bit to enable i2c1
+    STR r1, [r0]
+
+
+    ; configure PB8 & PB9 as AF4
+    LDR r0, =40020400                       ; base address
+    LDR r1, [r0]
+    BIC r1, r1, #(0xF << 16)                ; clear bits MODER8 and 9
+    ORR r1, r1, #(0xA << 16)                ; set to af mode
+    str r1, [r0]                            ; store back to MODER
+
+    ; Set AFRH for PB8 and PB9 to AF4
+
+    LDR r1, [r0, #0x24]
+    BIC r1, r1, #(0xFF << 0)                ; clear AFRH8/9
+    ORR r1, r1, #(0x44 << 0)                ; AF4 for both
+    STR r1, [r0, #0x24]
+
+    ; Configure I2C1 for standard 100kHz
+
+    LDR r0, =0x40005400                     ; i2c1 base
+    
+    ; CR2: set peripheral clock frequency (assuming 16 MHz)
+    MOV r1, #16
+    STR r1, [r0, #0x04]
+  
+    ; CCR: 100kHz speed
+    MOV r1, #80
+    STR r1, [r0, #0x1C]
+   
+    ; TRISE
+    MOV r1, #17
+    STR r1, [r0, #0x20]
+  
+    ; Enable I2C1
+    LDR r1, [r0]
+    ORR r1, r1, #1
+    STR r1, [r0]
+        
     BX LR
+    ENDP
 
 
+; helper func
+
+send_i2c_byte                                                
+        PUSH {r1, r2, lr}                          
+        LDR r1, =0x40005400                         ; i2c1 base address
+
+    wait_TXE 
+        LDR r2, [r1, #0x14]                         ; i2c_sr1
+        TST r2, #(1 << 7)                           ; check TXE flag set
+        BEQ wait_TXE                                ; if not set, wait
+        STRB r0, [r1, #0x10]                        ; i2c_dr
+
+    wait_BTF
+        LDR r2, [r1, #0x14]                         ; i2c_sr1
+        TST r2, #(1 << 2)                           ; check BTF flag set
+        BEQ wait_BTF                                ; if not set, wait
+        POP {r1, r2, pc}                            ; return from
+
+
+
+
+
+
+
+
+
+
+
+
+
+; Need to define these variables in main.s 
+;       AREA GameData, DATA, READWRITE
+; paddleLeftY   DCD 1
+; paddleRightY  DCD 2
+; ballX         DCD 7
+; ballY         DCD 1
+;    END
