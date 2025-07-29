@@ -5,9 +5,27 @@
 
 ; delay_init
 delay_init PROC
-    PUSH    {LR}    ; Always push LR for proper function return
-    BX      LR
-    POP     {PC}    ; Pop PC to return from function
+    PUSH    {r0, r1, LR}        ; Push registers
+    ; Configure SysTick for 1ms interrupts (assuming 16MHz CPU clock)
+    ; SysTick_LOAD = (CPU_CLOCK / 1000) - 1
+    ; For 16MHz, SysTick_LOAD = (16000000 / 1000) - 1 = 15999
+    LDR     r0, =0xE000E014     ; SysTick_LOAD register address
+    LDR     r1, =15999          ; 16MHz / 1kHz - 1
+    STR     r1, [r0]
+
+    ; SysTick_VAL = 0 (clear current value)
+    LDR     r0, =0xE000E018     ; SysTick_VAL register address
+    MOV     r1, #0
+    STR     r1, [r0]
+
+    ; SysTick_CTRL: Enable SysTick, Enable SysTick Interrupt, Use processor clock
+    ; CTRL bits: 0=ENABLE, 1=TICKINT, 2=CLKSOURCE
+    LDR     r0, =0xE000E010     ; SysTick_CTRL register address
+    MOV     r1, #7              ; (1<<0) | (1<<1) | (1<<2)
+    STR     r1, [r0]
+
+    POP     {r0, r1, PC}        ; Pop registers and return
+
 ENDP
 
 ; delay_ms [register 0 is # of ms]
@@ -51,5 +69,24 @@ us_inner_loop
 us_done
     POP     {r1, PC}            ; Pop r1 and PC to restore and return
     ENDP
+
+    ; -----------------------------------------------------------------------------
+; SysTick_Handler: Increments the global millisecond counter.
+; This needs to be exported and placed in the vector table in your startup file.
+; -----------------------------------------------------------------------------
+    EXPORT  SysTick_Handler
+SysTick_Handler PROC
+    PUSH    {R0, LR}            ; Save R0 and LR
+    LDR     R0, =g_ms_ticks     ; Load address of g_ms_ticks
+    LDR     R1, [R0]            ; Load current value of g_ms_ticks
+    ADD     R1, R1, #1          ; Increment by 1
+    STR     R1, [R0]            ; Store back
+    POP     {R0, PC}            ; Restore R0 and return from interrupt
+    ENDP
+
+; --- Global Millisecond Tick Counter ---
+    AREA    |.bss_delay|, NOINIT, READWRITE
+g_ms_ticks          DCD     0               ; Global variable to store milliseconds
+
 
     END
