@@ -13,6 +13,8 @@
 	import	game_update
 	import	lcd_render
 	import  delay_ms
+    import  lcd_send_cmd
+    import  lcd_send_data
 
     ; --- New/Existing Imports for ESP8266 Communication ---
     import  send_input_uart     ; Used to send raw bytes to ESP8266
@@ -33,29 +35,35 @@
     ; --- Imports for AT command constants (from usart_init.s) ---
     import  CMD_AT
     import  CMD_AT_RST
-    import  CMD_AT_CWMODE1      ; Set to Station mode (to connect to AP)
-    import  CMD_AT_CWMODE2      ; Set to AP mode (if Player 1 creates its own network)
-    import  CMD_AT_CWJAP_TEST   ; For connecting to AP
-    import  CMD_AT_CIFSR        ; For getting local IP
-    import  CMD_AT_CIPMUX1      ; Enable multiple connections
-    import  CMD_AT_CIPSERVER1   ; Enable TCP server
+    import  CMD_AT_CWMODE1
+    import  CMD_AT_CWMODE2
+    import  CMD_AT_CWJAP_TEST
+    import  CMD_AT_CIFSR
+    import  CMD_AT_CIPMUX1
+    import  CMD_AT_CIPSERVER_P1 ; This was CMD_AT_CIPSERVER1 previously, ensure name matches usart_init.s
+    import  CMD_AT_CIPSEND_0_1
 
     import  RESP_OK
     import  RESP_ERROR
     import  RESP_WIFI_GOT_IP
-    import  RESP_CONNECT        ; Expected response for TCP connection
-    import  RESP_SEND_OK        ; Expected response after CIPSEND data
-    import  RESP_CLOSED         ; Connection closed
-    import  RESP_IPD_PREFIX     ; For incoming data parsing
+    import  RESP_CONNECT
+    import  RESP_SEND_OK
+    import  RESP_CLOSED
+    import  RESP_IPD_PREFIX
+    import  uart_rx_buffer
 
-    ; --- Constants for TCP Server (Player 1) ---
-    ; !!! IMPORTANT: REPLACE "YOUR_PORT" with the same port as Player 2 !!!
-    PLAYER_GAME_PORT_STR    DCB "8080",0       ; e.g., "8080",0
-    TCP_LINK_ID             EQU 0                   ; Link ID for TCP connection (usually 0 for single connection)
-    ; This assumes only one client connects. If multiple clients, you need to manage link IDs.
+; ... (after all IMPORTS at the top of main.s) ...
 
-    ; --- Constants for paddle movement boundaries ---
-    MAX_PADDLE_Y_POS EQU 2      ; Max Y position for the top of a 2-pixel paddle on a 4-line LCD (0-3)
+; --- Constants for TCP Server (Player 1) ---
+TCP_LINK_ID             EQU 0                   ; Link ID for TCP connection (usually 0 for single connection)
+; This assumes only one client connects. If multiple clients, you need to manage link IDs.
+
+; --- Constants for paddle movement boundaries ---
+MAX_PADDLE_Y_POS EQU 2      ; Max Y position for the top of a 2-pixel paddle on a 4-line LCD (0-3)
+
+; ... (before Reset_Handler PROC) ...
+
+
 
 ; -----------------------------------------------------------------------------
 ; Reset_Handler: Entry point after reset. Initializes peripherals and ESP8266.
@@ -75,7 +83,7 @@ Reset_Handler PROC
 
     POP     {PC}                ; Restore LR and return to caller (which will be the main_loop branch)
     B       main_loop           ; Go to the main game loop
-ENDP
+	ENDP
 
 ; -----------------------------------------------------------------------------
 ; esp8266_setup: Initializes the ESP8266 module with AT commands.
@@ -108,8 +116,8 @@ esp8266_setup PROC
     BL      delay_ms
 
     ; --- 1. Test AT command (Check if ESP is responsive) ---
-    MOV     R0, #CMD_AT         ; Command: "AT\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT         ; Command: "AT\r\n"
+    LDR     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout: 1000ms
     BL      send_at_command
     CMP     R0, #1
@@ -132,8 +140,8 @@ L_at_ok
     BL      delay_ms
 
     ; --- 2. Reset ESP8266 ---
-    MOV     R0, #CMD_AT_RST     ; Command: "AT+RST\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_RST     ; Command: "AT+RST\r\n"
+    LDR     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #2000           ; Timeout: 2000ms (reset takes time)
     BL      send_at_command
     CMP     R0, #1
@@ -160,8 +168,8 @@ L_rst_ok
 
     ; --- 3. Set Wi-Fi Mode to Station (Client) ---
     ; Player 1 connects to AP to get an IP, then acts as server
-    MOV     R0, #CMD_AT_CWMODE1 ; Command: "AT+CWMODE=1\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_CWMODE1 ; Command: "AT+CWMODE=1\r\n"
+    LDR     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout: 1000ms
     BL      send_at_command
     CMP     R0, #1
@@ -189,8 +197,8 @@ L_cwmode_ok
 
     ; --- 4. Connect to Wi-Fi Access Point (Using hardcoded test string) ---
     ; This is using the CMD_AT_CWJAP_TEST defined in usart_init.s
-    MOV     R0, #CMD_AT_CWJAP_TEST ; Command: "AT+CWJAP=\"YourSSID\",\"YourPassword\"\r\n"
-    MOV     R1, #RESP_OK           ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_CWJAP_TEST ; Command: "AT+CWJAP=\"YourSSID\",\"YourPassword\"\r\n"
+    LDR     R1, =RESP_OK           ; Expected response: "OK\r\n"
     MOV     R2, #10000             ; Longer timeout (10 seconds) for connection
     BL      send_at_command
     CMP     R0, #1
@@ -232,8 +240,8 @@ L_cwjap_ok
 
     ; --- 5. Get Local IP Address (Player 1's IP) ---
     ; This is crucial for Player 2 to connect to Player 1.
-    MOV     R0, #CMD_AT_CIFSR   ; Command: "AT+CIFSR\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_CIFSR   ; Command: "AT+CIFSR\r\n"
+    LDR     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout
     BL      send_at_command     ; Sends CIFSR and reads response into uart_rx_buffer
     CMP     R0, #1
@@ -279,8 +287,8 @@ L_cifsr_ok
     BL      delay_ms
 
     ; --- 6. Enable Multiple Connections (CIPMUX) ---
-    MOV     R0, #CMD_AT_CIPMUX1 ; Command: "AT+CIPMUX=1\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_CIPMUX1 ; Command: "AT+CIPMUX=1\r\n"
+    LDR     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout
     BL      send_at_command
     CMP     R0, #1
@@ -310,8 +318,8 @@ L_cipmux_ok
     ; CMD_AT_CIPSERVER_P1 DCB "AT+CIPSERVER=1,YOUR_PORT\r\n",0
     ; And ensure YOUR_PORT matches your chosen game port.
 
-    MOV     R0, #CMD_AT_CIPSERVER_P1 ; Command to start TCP server
-    MOV     R1, #RESP_OK             ; Expected response: "OK\r\n"
+    LDR     R0, =CMD_AT_CIPSERVER_P1 ; Command to start TCP server
+    LDR     R1, =RESP_OK             ; Expected response: "OK\r\n"
     MOV     R2, #2000                ; Timeout
     BL      send_at_command
     CMP     R0, #1
@@ -387,7 +395,7 @@ send_paddle_wifi PROC
     ; !!! IMPORTANT: You NEED to create CMD_AT_CIPSEND_0_1 in usart_init.s like this:
     ; CMD_AT_CIPSEND_0_1 DCB "AT+CIPSEND=0,1\r\n",0
 
-    MOV     R0, #CMD_AT_CIPSEND_0_1 ; Command string for CIPSEND
+    LDR     R0, =CMD_AT_CIPSEND_0_1 ; Command string for CIPSEND
     MOV     R1, #'>'                ; Expected response: '>' prompt
     MOV     R2, #500                ; Timeout for prompt
     BL      send_at_command         ; Send CIPSEND command
@@ -402,8 +410,8 @@ L_send_data_prompt_ok
     BL      send_input_uart         ; Send the single character data
 
     ; Wait for "SEND OK" response
-    MOV     R0, #RESP_SEND_OK       ; Expected response: "SEND OK\r\n"
-    MOV     R1, #RESP_OK            ; send_at_command expects a second response for success
+    LDR     R0, =RESP_SEND_OK       ; Expected response: "SEND OK\r\n"
+    LDR     R1, =RESP_OK            ; send_at_command expects a second response for success
     MOV     R2, #1000               ; Timeout for SEND OK
     BL      send_at_command         ; This call will read until SEND OK or timeout
     CMP     R0, #1                  ; Check if SEND OK was received
@@ -437,7 +445,7 @@ L_recv_loop
     ; Check if the received line contains "+IPD" (Incoming Data)
     ; For now, we'll use str_contains for the prefix.
     LDR     r1, =RESP_IPD_PREFIX ; Load address of "+IPD," string
-    MOV     r0, =uart_rx_buffer  ; Haystack is the received buffer
+    LDR     r0, =uart_rx_buffer  ; Haystack is the received buffer
     BL      str_contains         ; Check if "+IPD," is in the buffer
     CMP     r0, #1               ; If str_contains returns 1 (found)
     BEQ     L_ipd_found          ; Process the IPD message
@@ -479,7 +487,7 @@ L_colon_found
 
 L_recv_loop_end
     POP     {r1-r7, PC}         ; Restore registers and return (R0 contains paddle_y or -1)
-ENDP
+	ENDP
 
 
 ; -----------------------------------------------------------------------------
@@ -554,5 +562,9 @@ L_skip_paddle2_update
     POP     {r0-r3, PC}         ; Restore saved registers and return from the function
     B       main_loop           ; Branch back to the beginning of main_loop to create an infinite loop
 	ENDP
+
+	AREA    |.data|, DATA, READONLY
+PLAYER_GAME_PORT_STR    DCB "8080",0       ; e.g., "8080",0
+
 
     END

@@ -1,7 +1,7 @@
 	AREA    |.text|, CODE, READONLY
-    export  delay_init
-    export  delay_ms
-    export  delay_us
+    EXPORT  delay_init
+    EXPORT  delay_ms
+    EXPORT  delay_us
 
 ; delay_init
 delay_init PROC
@@ -26,7 +26,7 @@ delay_init PROC
 
     POP     {r0, r1, PC}        ; Pop registers and return
 
-ENDP
+    ENDP
 
 ; delay_ms [register 0 is # of ms]
 ; Calibrated for 16MHz clock (adjust R1 literal for different clocks)
@@ -70,7 +70,7 @@ us_done
     POP     {r1, PC}            ; Pop r1 and PC to restore and return
     ENDP
 
-    ; -----------------------------------------------------------------------------
+; -----------------------------------------------------------------------------
 ; SysTick_Handler: Increments the global millisecond counter.
 ; This needs to be exported and placed in the vector table in your startup file.
 ; -----------------------------------------------------------------------------
@@ -86,7 +86,8 @@ SysTick_Handler PROC
 
 ; --- Global Millisecond Tick Counter ---
     AREA    |.bss_delay|, NOINIT, READWRITE
-g_ms_ticks          DCD     0               ; Global variable to store milliseconds
-
+    EXPORT  g_ms_ticks
+g_ms_ticks          DCD     0
+    ALIGN
 
     END

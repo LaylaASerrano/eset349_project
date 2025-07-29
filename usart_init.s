@@ -2,6 +2,11 @@
     export  usart_init
     export  send_input_uart
     export  recv_input_uart
+	export  send_string_uart  
+	export  uart_read_line    
+	export  str_contains      
+	export  send_at_command  
+	import g_ms_ticks
 
 usart_init PROC
     PUSH    {r0, r1, LR}        ; Save registers and LR
@@ -63,6 +68,17 @@ wait_txe_loop
 
 recv_input_uart PROC
     PUSH    {r1, LR}            ; Save r1 and LR
+
+    ; Wait for RXNE (data received)
+wait_rxne_loop_recv_input_uart
+    LDR     r0, =0x40004400     ; USART2 base address
+    LDR     r1, [r0, #0x00]     ; Read USART_SR
+    TST     r1, #0x20           ; Test RXNE bit (bit 5)
+    BEQ     wait_rxne_loop_recv_input_uart
+
+    LDR     r0, [r0, #0x04]     ; Read data from USART_DR into R0
+    POP     {r1, PC}            ; Restore r1 and return
+	endp
 ; -----------------------------------------------------------------------------
 ; send_string_uart: Sends a null-terminated string via UART.
 ; R0 = Address of the string to send.
@@ -260,28 +276,46 @@ exit_send_at_command
     POP     {r4-r7, PC}
     ENDP
 
-wait_rxne_loop
-    LDR     r0, =0x40004400     ; USART2 base address
-    LDR     r1, [r0, #0x00]     ; Read USART_SR
-    TST     r1, #0x20           ; Test RXNE bit (bit 5)
-    BEQ     wait_rxne_loop      ;
+;wait_rxne_loop
+;    LDR     r0, =0x40004400     ; USART2 base address
+;    LDR     r1, [r0, #0x00]     ; Read USART_SR
+;    TST     r1, #0x20           ; Test RXNE bit (bit 5)
+;    BEQ     wait_rxne_loop      ;
 
-    LDR     r0, [r0, #0x04]     ; Read data from USART_DR into R0
-    POP     {r1, PC}            ; Restore r1 and return
-	ENDP
+;    LDR     r0, [r0, #0x04]     ; Read data from USART_DR into R0
+;    POP     {r1, PC}            ; Restore r1 and return
+;	 ENDP
 
     ; --- Global Variables for UART Reception ---
     AREA    |.bss_usart|, NOINIT, READWRITE
+	EXPORT  uart_rx_buffer
+	EXPORT  uart_rx_index
+	EXPORT  uart_rx_ready
 
-uart_rx_buffer      SPACE   256             ; Buffer for received UART data (256 bytes)
-uart_rx_index       DCD     0               ; Current write index for uart_rx_buffer
-uart_rx_ready       DCD     0               ; Flag: 1 when a full line (ending with \n) is received
-
+uart_rx_buffer      SPACE   256
+uart_rx_index       DCD     0
+uart_rx_ready       DCD     0
+	
     ALIGN
 
     ; --- Constants for AT Commands and Expected Responses ---
     AREA    |.data_usart|, DATA, READONLY
-
+	EXPORT  CMD_AT
+	EXPORT  CMD_AT_RST
+	EXPORT  CMD_AT_CWMODE1
+	EXPORT  CMD_AT_CWMODE2
+	EXPORT  CMD_AT_CWJAP_TEST
+	EXPORT  CMD_AT_CIFSR
+	EXPORT  RESP_OK
+	EXPORT  RESP_ERROR
+	EXPORT  RESP_WIFI_GOT_IP
+	EXPORT  RESP_CONNECT
+	EXPORT  RESP_SEND_OK
+	EXPORT  CMD_AT_CIPMUX1
+	EXPORT  CMD_AT_CIPSERVER_P1
+	EXPORT  CMD_AT_CIPSEND_0_1
+	EXPORT  RESP_CLOSED
+	EXPORT  RESP_IPD_PREFIX 
 ; AT Commands (include CR+LF for termination)
 CMD_AT              DCB     "AT", 0x0D, 0x0A, 0 ; AT\r\n
 CMD_AT_RST          DCB     "AT+RST", 0x0D, 0x0A, 0 ; AT+RST\r\n
@@ -298,7 +332,15 @@ RESP_ERROR          DCB     "ERROR", 0x0D, 0x0A, 0
 RESP_WIFI_GOT_IP    DCB     "WIFI GOT IP", 0x0D, 0x0A, 0
 RESP_CONNECT        DCB     "CONNECT", 0x0D, 0x0A, 0
 RESP_SEND_OK        DCB     "SEND OK", 0x0D, 0x0A, 0
+CMD_AT_CIPMUX1      DCB     "AT+CIPMUX=1", 0x0D, 0x0A, 0 ; AT+CIPMUX=1\r\n
 
+; Add these two:
+CMD_AT_CIPSERVER_P1 DCB     "AT+CIPSERVER=1,8080", 0x0D, 0x0A, 0 ; AT+CIPSERVER=1,<port>\r\n (replace 8080 with your port)
+CMD_AT_CIPSEND_0_1  DCB     "AT+CIPSEND=0,1", 0x0D, 0x0A, 0 ; AT+CIPSEND=0,1\r\n (assuming link_id 0 and 1 byte)
+
+CMD_AT_CWMODE2      DCB     "AT+CWMODE=2", 0x0D, 0x0A, 0 ; AT+CWMODE=2\r\n (for AP mode)
+RESP_CLOSED         DCB     "CLOSED", 0x0D, 0x0A, 0      ; Expected response for closed connection
+RESP_IPD_PREFIX     DCB     "+IPD,", 0                   ; Prefix for incoming data
     ALIGN
 
 

@@ -189,19 +189,19 @@ L_line_read_done
     LDR     R1, =NEEDLE_FOUND_TEST
     BL      str_contains
     CMP     R0, #1
-    BEQ     .L_str_test1_pass
-    B       .L_str_test_fail_display
+    BEQ     L_str_test1_pass
+    B       L_str_test_fail_display
 
-.L_str_test1_pass:
+L_str_test1_pass
     ; Test 2: Needle not found
     LDR     R0, =HAYSTACK_TEST
     LDR     R1, =NEEDLE_NOT_FOUND_TEST
     BL      str_contains
     CMP     R0, #0
-    BEQ     .L_str_test_success_display
-    B       .L_str_test_fail_display
+    BEQ     L_str_test_success_display
+    B       L_str_test_fail_display
 
-.L_str_test_success_display:
+L_str_test_success_display
     MOV     R0, #'S'            ; Display 'S' for success
     BL      lcd_send_data
     MOV     R1, #'S'            ; Send 'S' to terminal
@@ -210,9 +210,9 @@ L_line_read_done
     BL      send_input_uart
     MOV     R1, #0x0A
     BL      send_input_uart
-    B       .L_str_test_done
+    B       L_str_test_done
 
-.L_str_test_fail_display:
+L_str_test_fail_display
     MOV     R0, #'F'            ; Display 'F' for failure
     BL      lcd_send_data
     MOV     R1, #'F'            ; Send 'F' to terminal
@@ -221,7 +221,7 @@ L_line_read_done
     BL      send_input_uart
     MOV     R1, #0x0A
     BL      send_input_uart
-.L_str_test_done:
+L_str_test_done
     MOV     R0, #1000           ; Delay 1 second
     BL      delay_ms
 
@@ -240,15 +240,15 @@ L_line_read_done
     MOV     R0, #' '
     BL      lcd_send_data
 
-    MOV     R0, =CMD_AT         ; Command: "AT\r\n"
-    MOV     R1, =RESP_OK        ; Expected response: "OK\r\n"
+    ldr     R0, =CMD_AT         ; Command: "AT\r\n"
+    ldr     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout: 1000ms
     BL      send_at_command
     CMP     R0, #1
-    BEQ     .L_at_cmd_test_success
-    B       .L_at_cmd_test_fail_display
+    BEQ     L_at_cmd_test_success
+    B       L_at_cmd_test_fail_display
 
-.L_at_cmd_test_success:
+L_at_cmd_test_success
     MOV     R0, #'A'            ; Display 'A' for AT success
     BL      lcd_send_data
     MOV     R1, #'A'            ; Send 'A' to terminal
@@ -257,9 +257,9 @@ L_line_read_done
     BL      send_input_uart
     MOV     R1, #0x0A
     BL      send_input_uart
-    B       .L_at_cmd_test_done
+    B       L_at_cmd_test_done
 
-.L_at_cmd_test_fail_display:
+L_at_cmd_test_fail_display
     MOV     R0, #'F'            ; Display 'F' for AT failure
     BL      lcd_send_data
     MOV     R1, #'F'            ; Send 'F' to terminal
@@ -268,7 +268,7 @@ L_line_read_done
     BL      send_input_uart
     MOV     R1, #0x0A
     BL      send_input_uart
-.L_at_cmd_test_done:
+L_at_cmd_test_done
     MOV     R0, #1000           ; Delay 1 second
     BL      delay_ms
 
@@ -287,15 +287,15 @@ L_line_read_done
     MOV     R0, #' '
     BL      lcd_send_data
 
-    MOV     R0, =CMD_AT_RST     ; Command: "AT+RST\r\n"
-    MOV     R1, =RESP_OK        ; Expected response: "OK\r\n"
+    ldr     R0, =CMD_AT_RST     ; Command: "AT+RST\r\n"
+    ldr     R1, =RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #2000           ; Timeout: 2000ms (reset takes longer)
     BL      send_at_command
     CMP     R0, #1
-    BEQ     .L_rst_cmd_test_success
-    B       .L_rst_cmd_test_fail_display
+    BEQ     L_rst_cmd_test_success
+    B       L_rst_cmd_test_fail_display
 
-.L_rst_cmd_test_success:
+L_rst_cmd_test_success
     MOV     R0, #'R'            ; Display 'R' for Reset success
     BL      lcd_send_data
     MOV     R1, #'R'            ; Send 'R' to terminal
@@ -306,9 +306,9 @@ L_line_read_done
     BL      send_input_uart
     MOV     R0, #3000           ; Delay for ESP to reboot
     BL      delay_ms
-    B       .L_rst_cmd_test_done
+    B       L_rst_cmd_test_done
 
-.L_rst_cmd_test_fail_display:
+L_rst_cmd_test_fail_display
     MOV     R0, #'F'            ; Display 'F' for Reset failure
     BL      lcd_send_data
     MOV     R1, #'F'            ; Send 'F' to terminal
@@ -317,7 +317,7 @@ L_line_read_done
     BL      send_input_uart
     MOV     R1, #0x0A
     BL      send_input_uart
-.L_rst_cmd_test_done:
+L_rst_cmd_test_done
     MOV     R0, #1000           ; Delay 1 second
     BL      delay_ms
 
@@ -325,7 +325,7 @@ L_line_read_done
     ; -------------------------------------------------------------------------
     ; Infinite loop to keep the debugger attached and observe state
     ; -------------------------------------------------------------------------
-    infinite_debug_loop:
+infinite_debug_loop
     B       infinite_debug_loop
 
     POP     {r0-r7, PC}         ; Restore registers and return (should not be reached)
