@@ -1,4 +1,4 @@
-	AREA    |.text|, CODE, READONLY
+    AREA    |.text|, CODE, READONLY
     export  Reset_Handler
     export  main_loop
 
@@ -22,23 +22,16 @@
     import  str_contains        ; Used to parse ESP8266 responses
     import  send_at_command     ; High-level function for AT commands
 
-    ; --- IMPORTANT: Add these imports for paddle variables ---
-    IMPORT  ball_x              ; Also import ball_x, ball_y, etc. if needed in main,
-    IMPORT  ball_y              ; though game_update and lcd_render handle them.
-    IMPORT  ball_vx
-    IMPORT  ball_vy
-    IMPORT  paddle1_y           ; Player 1's paddle Y (local, controlled by buttons)
-    IMPORT  paddle2_y           ; Player 2's paddle Y (remote, received via Wi-Fi)
+    ; --- Imports for global variables (from game_logic.s) ---
+    IMPORT  paddle1_y           ; Player 1's paddle Y (remote, received via Wi-Fi)
+    IMPORT  paddle2_y           ; Player 2's paddle Y (local, controlled by buttons)
 
     ; --- Imports for AT command constants (from usart_init.s) ---
     import  CMD_AT
     import  CMD_AT_RST
-    import  CMD_AT_CWMODE1      ; Set to Station mode (to connect to AP)
-    import  CMD_AT_CWMODE2      ; Set to AP mode (if Player 1 creates its own network)
+    import  CMD_AT_CWMODE1
     import  CMD_AT_CWJAP_TEST   ; For connecting to AP
-    import  CMD_AT_CIFSR        ; For getting local IP
-    import  CMD_AT_CIPMUX1      ; Enable multiple connections
-    import  CMD_AT_CIPSERVER1   ; Enable TCP server
+    import  CMD_AT_CIFSR        ; For getting local IP (useful for debugging, not strictly needed for client)
 
     import  RESP_OK
     import  RESP_ERROR
@@ -46,13 +39,16 @@
     import  RESP_CONNECT        ; Expected response for TCP connection
     import  RESP_SEND_OK        ; Expected response after CIPSEND data
     import  RESP_CLOSED         ; Connection closed
-    import  RESP_IPD_PREFIX     ; For incoming data parsing
 
-    ; --- Constants for TCP Server (Player 1) ---
-    ; !!! IMPORTANT: REPLACE "YOUR_PORT" with the same port as Player 2 !!!
+    ; --- Global Variables for Wi-Fi Communication ---
+    ; These are internal to main.s for now, but could be in a .bss section if needed elsewhere
+    ; For simplicity, we'll use immediate values where possible or pass via registers.
+
+    ; --- Constants for TCP Client Connection (Player 2) ---
+    ; !!! IMPORTANT: REPLACE THESE WITH YOUR ACTUAL VALUES !!!
+    PLAYER1_SERVER_IP_STR   DCB "YOUR_PLAYER1_IP",0 ; e.g., "192.168.1.100",0
     PLAYER_GAME_PORT_STR    DCB "8080",0       ; e.g., "8080",0
     TCP_LINK_ID             EQU 0                   ; Link ID for TCP connection (usually 0 for single connection)
-    ; This assumes only one client connects. If multiple clients, you need to manage link IDs.
 
     ; --- Constants for paddle movement boundaries ---
     MAX_PADDLE_Y_POS EQU 2      ; Max Y position for the top of a 2-pixel paddle on a 4-line LCD (0-3)
@@ -79,7 +75,7 @@ ENDP
 
 ; -----------------------------------------------------------------------------
 ; esp8266_setup: Initializes the ESP8266 module with AT commands.
-; Configures as Wi-Fi station, connects to AP, gets IP, and starts TCP server.
+; Configures as Wi-Fi station and connects to Player 1's TCP server.
 ; Displays status on LCD and traps on error.
 ; -----------------------------------------------------------------------------
 esp8266_setup PROC
@@ -157,9 +153,9 @@ L_rst_ok
     MOV     R0, #3000           ; Long delay for ESP to reboot and be ready
     BL      delay_ms
     ; After reset, the ESP might send "WIFI GOT IP" or "ready" unsolicited.
+    ; For simplicity, we just delay for now.
 
     ; --- 3. Set Wi-Fi Mode to Station (Client) ---
-    ; Player 1 connects to AP to get an IP, then acts as server
     MOV     R0, #CMD_AT_CWMODE1 ; Command: "AT+CWMODE=1\r\n"
     MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
     MOV     R2, #1000           ; Timeout: 1000ms
@@ -188,8 +184,8 @@ L_cwmode_ok
     BL      delay_ms
 
     ; --- 4. Connect to Wi-Fi Access Point (Using hardcoded test string) ---
-    ; This is using the CMD_AT_CWJAP_TEST defined in usart_init.s
-    MOV     R0, #CMD_AT_CWJAP_TEST ; Command: "AT+CWJAP=\"YourSSID\",\"YourPassword\"\r\n"
+    ; This uses CMD_AT_CWJAP_TEST defined in usart_init.s (e.g., "AT+CWJAP=\"SSID\",\"Password\"\r\n")
+    MOV     R0, #CMD_AT_CWJAP_TEST ; Command
     MOV     R1, #RESP_OK           ; Expected response: "OK\r\n"
     MOV     R2, #10000             ; Longer timeout (10 seconds) for connection
     BL      send_at_command
@@ -230,107 +226,51 @@ L_cwjap_ok
     MOV     R0, #500
     BL      delay_ms
 
-    ; --- 5. Get Local IP Address (Player 1's IP) ---
-    ; This is crucial for Player 2 to connect to Player 1.
-    MOV     R0, #CMD_AT_CIFSR   ; Command: "AT+CIFSR\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
-    MOV     R2, #1000           ; Timeout
-    BL      send_at_command     ; Sends CIFSR and reads response into uart_rx_buffer
-    CMP     R0, #1
-    BEQ     L_cifsr_ok
-    B       L_esp_error
-L_cifsr_ok
-    ; Display "IP: " on LCD, then attempt to display the IP from uart_rx_buffer
-    MOV     R0, #0xC0           ; Line 1
-    BL      lcd_send_cmd
-    MOV     R0, #'I'
-    BL      lcd_send_data
-    MOV     R0, #'P'
-    BL      lcd_send_data
-    MOV     R0, #':'
-    BL      lcd_send_data
-    MOV     R0, #' '
-    BL      lcd_send_data
-    ; --- Parse and display IP from uart_rx_buffer ---
-    ; This is complex in assembly. For debugging, you'd send to serial terminal.
-    ; For LCD, we'll try a simplified extraction assuming "+CIFSR:STAIP,"192.168.1.XXX""
-    ; Find the first quote, then the second quote. Copy characters between.
-    ; This is a placeholder; a full parser is out of scope for this snippet.
-    ; For now, just send the whole buffer to serial for manual reading.
-    LDR     R0, =uart_rx_buffer ; Load address of received buffer
-    BL      send_string_uart    ; Send the raw response to PC serial terminal
-    MOV     R0, #1000           ; Delay to allow reading from terminal
-    BL      delay_ms
+    ; --- 5. Connect to Player 1's TCP Server (This board is the Client) ---
+    ; Format: AT+CIPSTART="TCP","<Player1_IP>",<port>\r\n
+    ; We need to build this string dynamically or use a pre-defined one.
+    ; For simplicity, we'll use a hardcoded string here.
+    ; This requires a new constant in usart_init.s or defined here.
+    ; Let's assume usart_init.s will have CMD_AT_CIPSTART_P1
 
-    ; Display "IP OK" on LCD (as a placeholder for successful IP retrieval)
-    MOV     R0, #0xD4           ; Line 3
-    BL      lcd_send_cmd
-    MOV     R0, #'I'
-    BL      lcd_send_data
-    MOV     R0, #'P'
-    BL      lcd_send_data
-    MOV     R0, #' '
-    BL      lcd_send_data
-    MOV     R0, #'O'
-    BL      lcd_send_data
-    MOV     R0, #'K'
-    BL      lcd_send_data
-    MOV     R0, #500
-    BL      delay_ms
+    ; Build AT+CIPSTART command string:
+    ; "AT+CIPSTART=\"TCP\",\"" + PLAYER1_SERVER_IP_STR + "\"," + PLAYER_GAME_PORT_STR + "\r\n"
+    ; This is complex in pure assembly. A simpler approach is to use a pre-formatted string.
+    ; Let's define a new constant for this specific command.
+    ; For now, we'll assume a new constant `CMD_AT_CIPSTART_P1` exists in usart_init.s
+    ; and you have correctly set PLAYER1_SERVER_IP_STR and PLAYER_GAME_PORT_STR above.
 
-    ; --- 6. Enable Multiple Connections (CIPMUX) ---
-    MOV     R0, #CMD_AT_CIPMUX1 ; Command: "AT+CIPMUX=1\r\n"
-    MOV     R1, #RESP_OK        ; Expected response: "OK\r\n"
-    MOV     R2, #1000           ; Timeout
+    ; !!! IMPORTANT: You NEED to create CMD_AT_CIPSTART_P1 in usart_init.s like this:
+    ; CMD_AT_CIPSTART_P1 DCB "AT+CIPSTART=\"TCP\",\"YOUR_PLAYER1_IP\",\"YOUR_PORT\"\r\n",0
+    ; And ensure YOUR_PLAYER1_IP and YOUR_PORT match your setup.
+
+    MOV     R0, #CMD_AT_CIPSTART_P1 ; Command to connect to Player 1's server
+    MOV     R1, #RESP_CONNECT       ; Expected response: "CONNECT\r\n" or "OK\r\n"
+    MOV     R2, #5000               ; Timeout: 5 seconds for connection
     BL      send_at_command
     CMP     R0, #1
-    BEQ     L_cipmux_ok
+    BEQ     L_tcp_connect_ok
     B       L_esp_error
-L_cipmux_ok
-    MOV     R0, #0x80           ; Line 0
-    BL      lcd_send_cmd
-    MOV     R0, #'M'
-    BL      lcd_send_data
-    MOV     R0, #'U'
-    BL      lcd_send_data
-    MOV     R0, #'X'
-    BL      lcd_send_data
-    MOV     R0, #' '
-    BL      lcd_send_data
-    MOV     R0, #'O'
-    BL      lcd_send_data
-    MOV     R0, #'K'
-    BL      lcd_send_data
-    MOV     R0, #100
-    BL      delay_ms
-
-    ; --- 7. Start TCP Server ---
-    ; Command: AT+CIPSERVER=1,<port>\r\n
-    ; !!! IMPORTANT: You NEED to create CMD_AT_CIPSERVER_P1 in usart_init.s like this:
-    ; CMD_AT_CIPSERVER_P1 DCB "AT+CIPSERVER=1,YOUR_PORT\r\n",0
-    ; And ensure YOUR_PORT matches your chosen game port.
-
-    MOV     R0, #CMD_AT_CIPSERVER_P1 ; Command to start TCP server
-    MOV     R1, #RESP_OK             ; Expected response: "OK\r\n"
-    MOV     R2, #2000                ; Timeout
-    BL      send_at_command
-    CMP     R0, #1
-    BEQ     L_cipserver_ok
-    B       L_esp_error
-L_cipserver_ok
+L_tcp_connect_ok
     MOV     R0, #0xC0           ; Line 1
     BL      lcd_send_cmd
-    MOV     R0, #'S'
-    BL      lcd_send_data
-    MOV     R0, #'R'
-    BL      lcd_send_data
-    MOV     R0, #'V'
-    BL      lcd_send_data
-    MOV     R0, #' '
+    MOV     R0, #'C'
     BL      lcd_send_data
     MOV     R0, #'O'
     BL      lcd_send_data
-    MOV     R0, #'K'
+    MOV     R0, #'N'
+    BL      lcd_send_data
+    MOV     R0, #'N'
+    BL      lcd_send_data
+    MOV     R0, #'E'
+    BL      lcd_send_data
+    MOV     R0, #'C'
+    BL      lcd_send_data
+    MOV     R0, #'T'
+    BL      lcd_send_data
+    MOV     R0, #'E'
+    BL      lcd_send_data
+    MOV     R0, #'D'
     BL      lcd_send_data
     MOV     R0, #500
     BL      delay_ms
@@ -382,6 +322,10 @@ send_paddle_wifi PROC
     ; Construct AT+CIPSEND command: AT+CIPSEND=<link_id>,<length>\r\n
     ; Length will always be 1 for a single character.
     ; Using a temporary buffer to build the string.
+    ; This is a simplified approach. A more robust way would be to dynamically
+    ; build the string or use a dedicated string building function.
+
+    ; For simplicity, we'll send the AT+CIPSEND command directly, then the data.
     ; This assumes a single TCP connection (link ID 0).
     ; Command: "AT+CIPSEND=0,1\r\n"
     ; !!! IMPORTANT: You NEED to create CMD_AT_CIPSEND_0_1 in usart_init.s like this:
@@ -435,7 +379,18 @@ L_recv_loop
     BEQ     L_recv_loop_end     ; If timeout, exit loop
 
     ; Check if the received line contains "+IPD" (Incoming Data)
-    ; For now, we'll use str_contains for the prefix.
+    LDR     r0, =uart_rx_buffer ; Load address of received buffer
+    MOV     r1, #'+'            ; Search for '+'
+    MOV     r2, #'I'            ; Search for 'I'
+    MOV     r3, #'P'            ; Search for 'P'
+    MOV     r4, #'D'            ; Search for 'D'
+    ; This is a simplified check. A proper str_contains for "+IPD," is better.
+    ; Assuming str_contains takes (haystack_addr, needle_addr)
+    ; We need a specific needle string for "+IPD,"
+
+    ; !!! IMPORTANT: You NEED to create RESP_IPD_PREFIX in usart_init.s like this:
+    ; RESP_IPD_PREFIX DCB "+IPD,",0
+
     LDR     r1, =RESP_IPD_PREFIX ; Load address of "+IPD," string
     MOV     r0, =uart_rx_buffer  ; Haystack is the received buffer
     BL      str_contains         ; Check if "+IPD," is in the buffer
@@ -449,7 +404,17 @@ L_ipd_found
     ; Found "+IPD,". Now parse the data.
     ; The format is typically: +IPD,<link_id>,<len>:<data>
     ; We need to find the ':' and then take the character after it.
-    ; This is complex in assembly. We'll assume the data is the first character after the colon.
+    ; This is complex in assembly. For simplicity, we'll assume the data is
+    ; the first character after "+IPD,<link_id>,<len>:"
+    ; A more robust parser would find the second comma, then the colon, then read the byte.
+
+    ; Let's assume the paddle data is the last character in the buffer before \r\n
+    ; Or, more reliably, a fixed offset from the start of "+IPD," if the length is known.
+    ; For now, let's try to find the last character before \r\n.
+    ; This requires knowing the length of the received line. uart_read_line doesn't return length.
+    ; A simpler (but less robust) approach for a single char:
+    ; Assume the paddle data is at a fixed offset after "+IPD,0,1:"
+    ; This means we need to search for ":", then take the next character.
 
     ; Find the colon ':' in uart_rx_buffer
     MOV     r6, #0              ; Index for scanning buffer
@@ -483,7 +448,7 @@ ENDP
 
 
 ; -----------------------------------------------------------------------------
-; main_loop: The main game loop for Player 1.
+; main_loop: The main game loop for Player 2.
 ; Handles local paddle input, sends/receives paddle data over Wi-Fi,
 ; updates game, and renders.
 ; -----------------------------------------------------------------------------
@@ -491,56 +456,56 @@ main_loop PROC
     PUSH    {r0-r3, LR}         ; Save registers and Link Register
 
     ; ----------------------------------------------------
-    ; PLAYER 1 SPECIFIC LOGIC
+    ; PLAYER 2 SPECIFIC LOGIC
     ; ----------------------------------------------------
 
-    ; 1. Read local buttons for Player 1's paddle control (controlling paddle1_y)
+    ; 1. Read local buttons for Player 2's paddle control (controlling paddle2_y)
     BL      read_buttons        ; Call read_buttons to get local button state into R0
     MOV     r1, r0              ; Copy button state from R0 to R1 for processing
 
-    ; Get current paddle1_y value
-    LDR     r2, =paddle1_y      ; Load the address of paddle1_y into R2
-    LDR     r3, [r2]            ; Load the current value of paddle1_y into R3
+    ; Get current paddle2_y value
+    LDR     r2, =paddle2_y      ; Load the address of paddle2_y into R2
+    LDR     r3, [r2]            ; Load the current value of paddle2_y into R3
 
-    ; Check button states and update paddle1_y
+    ; Check button states and update paddle2_y
     TST     r1, #0x01           ; Test if the 'up' button (bit 0) is pressed
-    BNE     L_p1_move_up        ; If bit 0 is set, branch to move paddle up
+    BNE     L_p2_move_up        ; If bit 0 is set, branch to move paddle up
 
     TST     r1, #0x02           ; Test if the 'down' button (bit 1) is pressed
-    BNE     L_p1_move_down      ; If bit 1 is set, branch to move paddle down
+    BNE     L_p2_move_down      ; If bit 1 is set, branch to move paddle down
 
-    B       L_p1_no_move        ; If no recognized button is pressed, skip paddle movement
+    B       L_p2_no_move        ; If no recognized button is pressed, skip paddle movement
 
-L_p1_move_up
-    CMP     r3, #0              ; Compare current paddle1_y (R3) with the top boundary (0)
-    BEQ     L_p1_no_move        ; If already at 0, do not move further up
-    SUBS    r3, r3, #1          ; Decrement paddle1_y (move paddle up by 1)
-    STR     r3, [r2]            ; Store the new paddle1_y value back to memory
-    B       L_p1_no_move        ; Continue to the next step in the loop
+L_p2_move_up
+    CMP     r3, #0              ; Compare current paddle2_y (R3) with the top boundary (0)
+    BEQ     L_p2_no_move        ; If already at 0, do not move further up
+    SUBS    r3, r3, #1          ; Decrement paddle2_y (move paddle up by 1)
+    STR     r3, [r2]            ; Store the new paddle2_y value back to memory
+    B       L_p2_no_move        ; Continue to the next step in the loop
 
-L_p1_move_down
-    CMP     r3, #MAX_PADDLE_Y_POS ; Compare current paddle1_y (R3) with the bottom boundary (MAX_PADDLE_Y_POS)
-    BEQ     L_p1_no_move        ; If already at the bottom, do not move further down
-    ADDS    r3, r3, #1          ; Increment paddle1_y (move paddle down by 1)
-    STR     r3, [r2]            ; Store the new paddle1_y value back to memory
-    ; Fall through to L_p1_no_move
+L_p2_move_down
+    CMP     r3, #MAX_PADDLE_Y_POS ; Compare current paddle2_y (R3) with the bottom boundary (MAX_PADDLE_Y_POS)
+    BEQ     L_p2_no_move        ; If already at the bottom, do not move further down
+    ADDS    r3, r3, #1          ; Increment paddle2_y (move paddle down by 1)
+    STR     r3, [r2]            ; Store the new paddle2_y value back to memory
+    ; Fall through to L_p2_no_move
 
-L_p1_no_move
+L_p2_no_move
 
-    ; 2. Send local paddle position (paddle1_y) to Player 2 via Wi-Fi
-    ; The updated paddle1_y value is currently in R3.
-    MOV     r0, r3              ; Move paddle1_y (from R3) into R0 for send_paddle_wifi
-    BL      send_paddle_wifi    ; Call send_paddle_wifi to transmit Player 1's paddle_y
+    ; 2. Send local paddle position (paddle2_y) to Player 1 via Wi-Fi
+    ; The updated paddle2_y value is currently in R3.
+    MOV     r0, r3              ; Move paddle2_y (from R3) into R0 for send_paddle_wifi
+    BL      send_paddle_wifi    ; Call send_paddle_wifi to transmit Player 2's paddle_y
 
-    ; 3. Receive remote input (Player 2's paddle position) via Wi-Fi
+    ; 3. Receive remote input (Player 1's paddle position) via Wi-Fi
     BL      receive_paddle_wifi ; Call receive_paddle_wifi; received paddle_y will be in R0
     CMP     r0, #0xFFFFFFFF     ; Check if receive_paddle_wifi returned an error/no data (-1)
-    BEQ     L_skip_paddle2_update ; If error, don't update paddle2_y
+    BEQ     L_skip_paddle1_update ; If error, don't update paddle1_y
 
-    LDR     r1, =paddle2_y      ; Load the address of paddle2_y into R1
-    STR     r0, [r1]            ; Store the received value (from R0) into paddle2_y
+    LDR     r1, =paddle1_y      ; Load the address of paddle1_y into R1
+    STR     r0, [r1]            ; Store the received value (from R0) into paddle1_y
 
-L_skip_paddle2_update
+L_skip_paddle1_update
 
     ; ----------------------------------------------------
     ; COMMON GAME LOGIC (Applies to both players)
@@ -553,6 +518,6 @@ L_skip_paddle2_update
 
     POP     {r0-r3, PC}         ; Restore saved registers and return from the function
     B       main_loop           ; Branch back to the beginning of main_loop to create an infinite loop
-	ENDP
+    ENDP
 
     END
