@@ -10,11 +10,11 @@
     export  paddle2_y
 
     ; constants section
-MAX_Y          EQU     3           ; Since it's a 4-line LCD (0–3)
+MAX_Y          EQU     1           ; Since it's a 4-line LCD (0–3)
 MAX_X          EQU     15          ; 16 characters (0–15)
-PADDLE_HEIGHT  EQU     2           ; Paddle is 2 pixels tall
+PADDLE_HEIGHT  EQU     1           ; Paddle is 2 pixels tall
 BALL_START_X   EQU     8           ; Center X
-BALL_START_Y   EQU     2           ; Center Y
+BALL_START_Y   EQU     0           ; Center Y
 
 game_init PROC
     PUSH    {r0-r3, LR}         ; Save registers and LR

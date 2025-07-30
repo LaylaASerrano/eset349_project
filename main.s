@@ -15,6 +15,8 @@
 	import  delay_ms
     import  lcd_send_cmd
     import  lcd_send_data
+		
+	import debug 
 
     ; --- New/Existing Imports for ESP8266 Communication ---
     import  send_input_uart     ; Used to send raw bytes to ESP8266
@@ -70,7 +72,8 @@ MAX_PADDLE_Y_POS EQU 2      ; Max Y position for the top of a 2-pixel paddle on 
 ; -----------------------------------------------------------------------------
 Reset_Handler PROC
     PUSH    {LR}                ; Save LR for proper function context
-
+	
+	BL debug ; MAKE SURE TO COMMENT OUT LATER PLEASE 
     ; Initialize all necessary peripherals
     BL      gpio_init           ; Initialize GPIO for buttons and UART
     BL      game_init           ; Initialize ball and paddle positions
