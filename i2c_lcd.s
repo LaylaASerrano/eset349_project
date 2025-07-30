@@ -22,11 +22,7 @@ i2c_init PROC
 
     ; enable clocks
 
-    ; GPIOB clock
-    LDR     r0, =0x40023830     ; RCC_AHB1ENR
-    LDR     r1, [r0]            ;
-    ORR     r1, r1, #(1 << 1)   ; set bit to enable gpiob
-    STR     r1, [r0]            ;
+    ; GPIOB clock         
 
     ; i2c1 clock
     LDR     r0, =0x40023840     ; RCC_APB1ENR
