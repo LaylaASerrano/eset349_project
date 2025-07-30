@@ -21,7 +21,7 @@ i2c_init PROC
     PUSH    {r0, r1, LR}        ; Save registers and LR
 
     ; enable clocks
-
+ 
     ; GPIOB clock         
 
     ; i2c1 clock
