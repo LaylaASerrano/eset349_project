@@ -11,9 +11,7 @@
     IMPORT  paddle2_y
     IMPORT  delay_ms
 
-LCD_ADDR EQU 0x27
-
-
+LCD_ADDR EQU 0x3F
 
 
 ; -------------------------------
@@ -217,17 +215,18 @@ lcd_render PROC ; THIS NEED TO RENDER 16x2 LCD screen ONLY !!!
     MOV     r4, #0              ; r4 = current row (0-3)
 
 row_loop
-    CMP     r4, #4              ;
+    CMP     r4, #2              ; <--- CHANGE to #2 for 2-line LCD (rows 0 and 1)
     BEQ     render_done         ;
 
     ; Set DDRAM address for the current row
-    ; Addresses: 0x80 (row 0), 0xC0 (row 1), 0x94 (row 2), 0xD4 (row 3)
+    ; Addresses: 0x80 (row 0), 0xC0 (row 1)
     CMP     r4, #0              ;
     BEQ     set_row0_addr       ;
     CMP     r4, #1              ;
     BEQ     set_row1_addr       ;
     
     ; Fall through or branch to common point if needed
+    B       next_row            ; <--- ADDED explicit branch to next_row if not 0 or 1.
 
 set_row0_addr
     MOV     r0, #0x80           ; Row 0 address
@@ -254,12 +253,12 @@ col_loop
     ; Left paddle (always at X=0)
     CMP     r5, #0              ;
     BNE     check_right_paddle  ;
-    ; Check if current row (r4) is at paddle1_y or paddle1_y + 1
-    CMP     r4, r6              ;
+    ; Check if current row (r4) is at paddle1_y
+    CMP     r4, r6              ; <--- CORRECT CHECK for 1-height paddle
     BEQ     draw_left_paddle_char ;
-    ADD     r1, r6, #1          ;
-    CMP     r4, r1              ;
-    BEQ     draw_left_paddle_char ;
+    ; REMOVED: ADD     r1, r6, #1  ; This was for 2-height paddles
+    ; REMOVED: CMP     r4, r1      ; This was for 2-height paddles
+    ; REMOVED: BEQ     draw_left_paddle_char
     B       check_right_paddle  ;
 
 draw_left_paddle_char
@@ -269,12 +268,12 @@ draw_left_paddle_char
 check_right_paddle
     CMP     r5, #15             ;
     BNE     check_ball          ;
-    ; Check if current row (r4) is at paddle2_y or paddle2_y + 1
-    CMP     r4, r7              ;
+    ; Check if current row (r4) is at paddle2_y
+    CMP     r4, r7              ; <--- CORRECT CHECK for 1-height paddle
     BEQ     draw_right_paddle_char ;
-    ADD     r1, r7, #1          ;
-    CMP     r4, r1              ;
-    BEQ     draw_right_paddle_char ;
+    ; REMOVED: ADD     r1, r7, #1  ; This was for 2-height paddles
+    ; REMOVED: CMP     r4, r1      ; This was for 2-height paddles
+    ; REMOVED: BEQ     draw_right_paddle_char
     B       check_ball          ;
 
 draw_right_paddle_char
