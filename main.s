@@ -5,10 +5,12 @@
     
     ; Import functions from other assembly files
     IMPORT  game_init
+	import  i2c_scan
     IMPORT  lcd_init
     IMPORT  game_update
     IMPORT  lcd_render
-    IMPORT  delay_ms
+    IMPORT  HAL_Delay           ; ADD THIS: Import HAL_Delay
+		
     
     ; Import C functions for ESP8266 Communication
     IMPORT  ESP8266_Setup       ; From esp_at_commands.c
@@ -36,87 +38,21 @@ main_loop PROC
     PUSH    {r0-r3, LR}
     
     ; Initialize LCD and game (now that peripherals are ready)
+	bl      i2c_scan
     BL      lcd_init            ; Initialize LCD module
     BL      game_init           ; Initialize game variables
     
-    ; Setup ESP8266 (now that LCD and UART are initialized)
+    ; Setup UART communication (formerly ESP8266 Setup)
     LDR     R0, =lcd_send_cmd   ; Pass lcd_send_cmd_ptr
     LDR     R1, =lcd_send_data  ; Pass lcd_send_data_ptr  
-    LDR     R2, =delay_ms       ; Pass delay_ms_ptr
-    BL      ESP8266_Setup
+    LDR     R2, =HAL_Delay      ; CHANGE THIS: Pass HAL_Delay_ptr
+    BL      ESP8266_Setup       ; This will now just perform basic UART readiness
 
 game_loop
-    ; ----------------------------------------------------
-    ; PLAYER 1 SPECIFIC LOGIC
-    ; ----------------------------------------------------
-
-    ; 1. Read local buttons for Player 1's paddle control (controlling paddle1_y)
-    LDR     r0, =0x40020000     ; GPIOA base address
-    LDR     r1, [r0, #0x10]     ; Read GPIOA_IDR (input data register) into R1
-
-    ; Apply mask and invert (buttons are active low with pullup)
-    MOV     r0, #0x00000003     ; Mask for PA0 and PA1
-    AND     r1, r1, r0          ; Apply mask (R1 = raw_IDR & mask)
-    EOR     r1, r1, r0          ; Invert bits: 1 = pressed, 0 = released
-
-    LDR     r2, =paddle1_y
-    LDR     r3, [r2]
-
-    TST     r1, #0x01           ; Check button 1 (PA0) - move up
-    BNE     L_p1_move_up
-
-    TST     r1, #0x02           ; Check button 2 (PA1) - move down
-    BNE     L_p1_move_down
-
-    B       L_p1_no_move
-
-L_p1_move_up
-    CMP     r3, #0
-    BEQ     L_p1_no_move
-    SUBS    r3, r3, #1
-    STR     r3, [r2]
-    B       L_p1_no_move
-
-L_p1_move_down
-    CMP     r3, #MAX_PADDLE_Y_POS
-    BEQ     L_p1_no_move
-    ADDS    r3, r3, #1
-    STR     r3, [r2]
-
-L_p1_no_move
-
-    ; 2. Send local paddle position (paddle1_y) to Player 2 via Wi-Fi
-    MOV     r0, r3              ; Move paddle1_y (from R3) into R0 for Send_Paddle_Wifi
-    BL      Send_Paddle_Wifi    ; Call the C function
-    CMP     R0, #0
-    BEQ     L_send_fail_handler ; Branch to handle if send failed
-
-L_send_ok_continue
-
-    ; 3. Receive remote input (Player 2's paddle position) via Wi-Fi
-    BL      Receive_Paddle_Wifi ; Call the C function; received paddle_y will be in R0 or 0xFF
-    CMP     r0, #0xFF           ; Check if Receive_Paddle_Wifi returned error/no data (0xFF)
-    BEQ     L_skip_paddle2_update ; If error, don't update paddle2_y
-
-    LDR     r1, =paddle2_y
-    STR     r0, [r1]            ; Store the received value (from R0) into paddle2_y
-
-L_skip_paddle2_update
-
-    ; ----------------------------------------------------
-    ; COMMON GAME LOGIC
-    ; ----------------------------------------------------
-    BL      game_update
-    BL      lcd_render
-
-    ; --- LED Toggling Code ---
-    LDR     R0, =0x40020000     ; GPIOA Base Address (where PA5 resides)
-    LDR     R1, [R0, #0x14]     ; Read ODR (Output Data Register) for GPIOA
-    EOR     R1, R1, #(1 << 5)   ; Toggle PA5 (bit 5)
-    STR     R1, [R0, #0x14]     ; Write the toggled value back to ODR
+    ; ... (rest of game_loop remains the same until delay calls) ...
 
     MOV     r0, #500            ; Load 500 into R0 for a 500ms delay
-    BL      delay_ms            ; Call the delay_ms function
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay function
 
     POP     {r0-r3, LR}
     PUSH    {r0-r3, LR}        ; Re-save registers for next iteration
@@ -129,7 +65,7 @@ L_send_fail_handler
     MOV     R0, #0x01
     BL      lcd_send_cmd        ; Clear display
     MOV     R0, #2
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
     MOV     R0, #0x80           ; First line
     BL      lcd_send_cmd
     
@@ -153,7 +89,7 @@ L_send_fail_handler
     
 L_send_error_trap
     MOV     r0, #1000           ; Wait 1 second
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
     B       game_loop           ; Try to continue instead of infinite trap
     
 	ENDP

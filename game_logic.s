@@ -9,7 +9,9 @@
     EXPORT  ball_vx
     EXPORT  ball_vy
     EXPORT  paddle1_y
-    EXPORT  paddle2_y
+    
+    ; Import paddle2_y from another file (it's defined in main.c)
+    IMPORT  paddle2_y
 
     ; constants section
 MAX_Y          EQU     1           ; Max Y-coordinate for the ball (0-1 for 2 lines) 
@@ -51,6 +53,7 @@ game_init PROC
     MOV     r1, #0              ; Initial position for paddle1_y (e.g., top of screen, or center if MAX_PADDLE_Y_GAME_POS allows) 
     STR     r1, [r0]            ;
 
+    ; Initialize paddle2_y, which is defined in C
     LDR     r0, =paddle2_y      ;
     MOV     r1, #0              ; Initial position for paddle2_y 
     STR     r1, [r0]            ;
@@ -345,13 +348,17 @@ game_done
     EXPORT  ball_vx
     EXPORT  ball_vy
     EXPORT  paddle1_y
-    EXPORT  paddle2_y
+    
+    ; The following lines for paddle2_y have been removed to resolve the linker error.
+    ; This variable is now IMPORTed from another file (main.c).
+    ; EXPORT  paddle2_y
+    ; paddle2_y   SPACE   4
 
+    ; Allocate memory for the other variables
 ball_x      SPACE   4           ; Allocate 4 bytes for ball_x
 ball_y      SPACE   4           ; Allocate 4 bytes for ball_y
 ball_vx     SPACE   4           ; +1 or -1 (horizontal direction) 
 ball_vy     SPACE   4           ; +1, 0, -1 (vertical direction) 
 paddle1_y   SPACE   4           ; Corrected to 4 bytes (DCD equivalent) 
-paddle2_y   SPACE   4           ; Corrected to 4 bytes (DCD equivalent) 
 	align 
     END

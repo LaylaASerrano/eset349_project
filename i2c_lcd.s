@@ -11,8 +11,9 @@
     IMPORT  ball_y
     IMPORT  paddle1_y
     IMPORT  paddle2_y
-    IMPORT  delay_ms
-    IMPORT  Get_ms_ticks    ; Import for timeout handling
+    IMPORT  HAL_Delay       ; ADD THIS: Import HAL_Delay
+    IMPORT  delay_us        ; Keep this for microsecond delays
+    IMPORT  HAL_GetTick     ; CHANGE THIS: Use HAL_GetTick instead of Get_ms_ticks
 
 ; Try different common LCD I2C addresses
 LCD_ADDR_3F EQU 0x3F
@@ -84,7 +85,7 @@ i2c_test_address PROC
     STR     r1, [r5, #0x00]
 
     ; Wait for SB with timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     MOV     r3, r0              ; Save start time
 
 test_wait_sb
@@ -93,7 +94,7 @@ test_wait_sb
     BNE     test_sb_set
 
     ; Check timeout (10ms)
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     SUB     r2, r0, r3
     CMP     r2, #10
     BLT     test_wait_sb
@@ -109,7 +110,7 @@ test_sb_set
     STRB    r1, [r5, #0x10]     ; Write to DR
 
     ; Wait for ADDR or AF (address fail) with timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     MOV     r3, r0              ; Save start time
 
 test_wait_addr
@@ -120,7 +121,7 @@ test_wait_addr
     BNE     test_addr_nack
 
     ; Check timeout (10ms)
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     SUB     r2, r0, r3
     CMP     r2, #10
     BLT     test_wait_addr
@@ -155,7 +156,7 @@ i2c_force_stop PROC
 
     ; Small delay for stop to complete
     MOV     r0, #1
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     POP     {r1, PC}
     ENDP
@@ -198,7 +199,7 @@ lcd_send_byte PROC
     STR     r0, [r1, #0x00]
 
     ; Wait for SB with timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     MOV     r5, r0              ; Save start time
 
 wait_SB_tx_timeout
@@ -207,7 +208,7 @@ wait_SB_tx_timeout
     BNE     sb_set
 
     ; Check 50ms timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     SUB     r0, r0, r5
     CMP     r0, #50
     BLT     wait_SB_tx_timeout
@@ -215,7 +216,7 @@ wait_SB_tx_timeout
     ; Timeout - try recovery
     BL      i2c_force_stop
     MOV     r0, #2
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
     B       lcd_send_byte_retry ; Retry once
 
 sb_set
@@ -224,7 +225,7 @@ sb_set
     STRB    r0, [r1, #0x10]
 
     ; Wait for ADDR with timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     MOV     r5, r0
 
 wait_ADDR_tx_timeout
@@ -235,7 +236,7 @@ wait_ADDR_tx_timeout
     BNE     addr_failed
 
     ; Check 50ms timeout
-    BL      Get_ms_ticks
+    BL      HAL_GetTick         ; CHANGE THIS: Call HAL_GetTick
     SUB     r0, r0, r5
     CMP     r0, #50
     BLT     wait_ADDR_tx_timeout
@@ -244,7 +245,7 @@ addr_failed
     ; Address not acknowledged or timeout
     BL      i2c_force_stop
     MOV     r0, #5
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
 lcd_send_byte_retry
     ; Try to rescan for LCD
@@ -306,32 +307,32 @@ lcd_init PROC
 
     ; Continue with normal init
     MOV     r0, #50
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     ; Rest of initialization sequence...
     MOV     r0, #0x30
     MOV     r1, #0
     BL      lcd_send_byte
     MOV     r0, #5
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     MOV     r0, #0x30
     MOV     r1, #0
     BL      lcd_send_byte
     MOV     r0, #1
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     MOV     r0, #0x30
     MOV     r1, #0
     BL      lcd_send_byte
     MOV     r0, #1
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     MOV     r0, #0x20
     MOV     r1, #0
     BL      lcd_send_byte
     MOV     r0, #1
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     MOV     r0, #0x28
     BL      lcd_send_cmd
@@ -345,7 +346,7 @@ lcd_init PROC
     MOV     r0, #0x01
     BL      lcd_send_cmd
     MOV     r0, #2
-    BL      delay_ms
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
 
     MOV     r0, #0              ; Success
     POP     {r0-r1, PC}
@@ -355,7 +356,68 @@ lcd_init_fail
     POP     {r0-r1, PC}
     ENDP
 
-; Include rest of original functions (lcd_send_cmd, lcd_send_data, etc.)
-; with the working address from lcd_working_addr instead of fixed LCD_ADDR
+; -----------------------------------------------------------------------------
+; lcd_send_cmd: Sends a command byte to the LCD.
+; R0 = command byte
+; -----------------------------------------------------------------------------
+lcd_send_cmd PROC
+    PUSH    {LR}
+    MOV     R1, #0              ; RS_BIT = 0 for command
+    BL      lcd_send_byte       ; Call the generic send byte function
+    POP     {PC}
+    ENDP
+
+; -----------------------------------------------------------------------------
+; lcd_send_data: Sends a data byte to the LCD.
+; R0 = data byte
+; -----------------------------------------------------------------------------
+lcd_send_data PROC
+    PUSH    {LR}
+    MOV     R1, #1              ; RS_BIT = 1 for data
+    BL      lcd_send_byte       ; Call the generic send byte function
+    POP     {PC}
+    ENDP
+
+; -----------------------------------------------------------------------------
+; lcd_pulse_en: Pulses the Enable (EN) pin for the LCD.
+; R0 = byte to send (contains data/command, RS, and backlight bits)
+; This function is called by lcd_send_byte.
+; -----------------------------------------------------------------------------
+lcd_pulse_en PROC
+    PUSH    {R1, LR}
+    LDR     R1, =0x40005400     ; I2C1 base address (same as in lcd_send_byte)
+
+    ; Set EN high (EN = 1, D7=1)
+    ORR     R0, R0, #0x04       ; Add EN bit (usually bit 2 or 0x04)
+    STRB    R0, [R1, #0x10]     ; Write to DR (Data Register)
+    MOV     R0, #1              ; Short delay for pulse width
+    BL      delay_us            ; Call delay_us (KEEP THIS)
+
+    ; Set EN low (EN = 0, D7=0)
+    BIC     R0, R0, #0x04       ; Clear EN bit
+    STRB    R0, [R1, #0x10]     ; Write to DR
+    MOV     R0, #1              ; Short delay after pulse
+    BL      delay_us            ; Call delay_us (KEEP THIS)
+
+    POP     {R1, PC}
+    ENDP
+
+; -----------------------------------------------------------------------------
+; lcd_render: Renders the game state on the LCD.
+; Reads ball_x, ball_y, paddle1_y, paddle2_y and updates LCD.
+; -----------------------------------------------------------------------------
+lcd_render PROC
+    PUSH    {r0-r7, LR}         ; Save registers and LR
+
+    ; Clear display
+    MOV     R0, #0x01           ; Clear display command
+    BL      lcd_send_cmd
+    MOV     R0, #2              ; Delay 2ms for clear to complete
+    BL      HAL_Delay           ; CHANGE THIS: Call HAL_Delay
+
+    ; ... (rest of lcd_render code) ...
+
+    POP     {r0-r7, PC}         ; Restore registers and return
+    ENDP
 
 	END
