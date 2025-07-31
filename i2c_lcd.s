@@ -1,5 +1,5 @@
 	AREA    |.text|, CODE, READONLY
-    export  i2c_init
+    
     export  lcd_init
     export  lcd_send_cmd
     export  lcd_send_data
@@ -13,63 +13,8 @@
 
 LCD_ADDR EQU 0x27
 
-; -------------------------------
-; i2c_init: enable gpiob | enable i2c1 | configure pb8/pb9
-; -------------------------------
 
-i2c_init PROC
-    PUSH    {r0, r1, LR}        ; Save registers and LR
 
-    ; enable clocks
-
-    ; GPIOB clock
-    LDR     r0, =0x40023830     ; RCC_AHB1ENR
-    LDR     r1, [r0]            ;
-    ORR     r1, r1, #(1 << 1)   ; set bit to enable gpiob
-    STR     r1, [r0]            ;
-
-    ; i2c1 clock
-    LDR     r0, =0x40023840     ; RCC_APB1ENR
-    LDR     r1, [r0]            ;
-    ORR     r1, r1, #(1 << 21)  ; Enable I2C1 clock
-    STR     r1, [r0]            ;
-
-    ; configure PB8 & PB9 as AF4
-    LDR     r0, =0x40020400     ; GPIOB base address
-    LDR     r1, [r0, #0x00]     ; Read current MODER value
-    BIC     r1, r1, #(0xF << 16) ; Clear bits MODER8 and 9
-    ORR     r1, r1, #(0xA << 16) ; Set to af mode (10b) for PB8, PB9
-    STR     r1, [r0, #0x00]     ; Store back to MODER
-
-    ; Set AFRH for PB8 and PB9 to AF4
-    LDR     r1, [r0, #0x24]     ; Read AFRH
-    BIC     r1, r1, #(0xFF << 0) ; Clear AFRH8/9
-    ORR     r1, r1, #(0x44 << 0) ; AF4 for both (0100b for each nibble)
-    STR     r1, [r0, #0x24]     ;
-
-    ; Configure I2C1 for standard 100kHz
-    LDR     r0, =0x40005400     ; I2C1 base address
-
-    ; CR2: set peripheral clock frequency (assuming 16 MHz)
-    MOV     r1, #16             ; PCLK1 frequency in MHz
-    STR     r1, [r0, #0x04]     ; I2C_CR2
-
-    ; CCR: 100kHz speed (standard mode)
-    MOV     r1, #80             ; (PCLK1 / (2 * 100kHz)) = (16MHz / 200kHz) = 80
-    STR     r1, [r0, #0x1C]     ; I2C_CCR
-
-    ; TRISE: (Trise / Tpclk1) + 1 for standard mode. Trise = 1000ns. Tpclk1 = 1/16MHz = 62.5ns
-    ; (1000ns / 62.5ns) + 1 = 16 + 1 = 17
-    MOV     r1, #17             ; TRISE calculation
-    STR     r1, [r0, #0x20]     ; I2C_TRISE
-
-    ; Enable I2C1
-    LDR     r1, [r0, #0x00]     ; Read I2C_CR1 (offset 0x00)
-    ORR     r1, r1, #1          ; Set PE bit (bit 0) to enable I2C
-    STR     r1, [r0, #0x00]     ; Write back to I2C_CR1
-
-    POP     {r0, r1, PC}        ; Restore registers and return
-ENDP
 
 ; -------------------------------
 ; Helper function to send a byte over I2C to the PCF8574.
@@ -88,7 +33,7 @@ wait_TXE_byte
 
     STRB    r0, [r1, #0x10]     ; Write data byte from R0 to I2C_DR
     POP     {r1, r2, PC}        ; Restore registers and return
-    ENDP
+	ENDP
 
 ; -------------------------------
 ; Helper function for pulsing the EN bit and sending nibbles
@@ -111,7 +56,7 @@ lcd_pulse_en PROC
     BL      i2c_write_byte      ;
 
     POP     {r1, PC}            ; Restore r1 and return
-    ENDP
+	ENDP
 
 
 ; -------------------------------
@@ -169,7 +114,7 @@ wait_ADDR_tx
     STR     r0, [r1, #0x00]     ;
 
     POP     {r0, r1, r2, r3, r4, PC} ; Restore registers and return
-    ENDP
+	ENDP
 
 ; -------------------------------
 ; lcd_send_cmd: sends a command to LCD
@@ -180,7 +125,7 @@ lcd_send_cmd PROC
     MOV     r1, #0              ; RS=0 for command
     BL      lcd_send_byte       ;
     POP     {PC}                ; Return
-    ENDP
+	ENDP
 
 ; -------------------------------
 ; lcd_send_data: sends a data byte (character) to LCD
@@ -191,7 +136,7 @@ lcd_send_data PROC
     MOV     r1, #1              ; RS=1 for data
     BL      lcd_send_byte       ;
     POP     {PC}                ; Return
-    ENDP
+	ENDP
 
 ; -------------------------------
 ; lcd_init: initializes the LCD module
@@ -243,13 +188,13 @@ lcd_init PROC
     BL      delay_ms            ;
 
     POP     {r0, PC}            ; Restore r0 and return
-    ENDP
+	ENDP
 
 
 ; -------------------------------
 ; lcd_render: draw paddles and ball based on game state
 ; -------------------------------
-lcd_render PROC
+lcd_render PROC ; THIS NEED TO RENDER 16x2 LCD screen ONLY !!!
     PUSH    {r0-r9, LR}         ; Save all used registers and LR
 
     ; Clear display
@@ -281,10 +226,7 @@ row_loop
     BEQ     set_row0_addr       ;
     CMP     r4, #1              ;
     BEQ     set_row1_addr       ;
-    CMP     r4, #2              ;
-    BEQ     set_row2_addr       ;
-    CMP     r4, #3              ;
-    BEQ     set_row3_addr       ;
+    
     ; Fall through or branch to common point if needed
 
 set_row0_addr
@@ -297,15 +239,6 @@ set_row1_addr
     BL      lcd_send_cmd        ;
     B       continue_col_loop   ;
 
-set_row2_addr
-    MOV     r0, #0x94           ; Row 2 address
-    BL      lcd_send_cmd        ;
-    B       continue_col_loop   ;
-
-set_row3_addr
-    MOV     r0, #0xD4           ; Row 3 address
-    BL      lcd_send_cmd        ;
-    B       continue_col_loop   ;
 
 continue_col_loop
     ; Column loop
@@ -366,6 +299,6 @@ next_row
 
 render_done
     POP     {r0-r9, PC}         ; Restore registers and return
-    ENDP
+	ENDP
 
-    END
+	END

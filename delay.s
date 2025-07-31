@@ -1,91 +1,70 @@
 	AREA    |.text|, CODE, READONLY
-    EXPORT  delay_init
     EXPORT  delay_ms
     EXPORT  delay_us
+    EXPORT  Get_ms_ticks ; Function to get ms ticks from C
 
-; delay_init
-delay_init PROC
-    PUSH    {r0, r1, LR}        ; Push registers
-    ; Configure SysTick for 1ms interrupts (assuming 16MHz CPU clock)
-    ; SysTick_LOAD = (CPU_CLOCK / 1000) - 1
-    ; For 16MHz, SysTick_LOAD = (16000000 / 1000) - 1 = 15999
-    LDR     r0, =0xE000E014     ; SysTick_LOAD register address
-    LDR     r1, =15999          ; 16MHz / 1kHz - 1
-    STR     r1, [r0]
-
-    ; SysTick_VAL = 0 (clear current value)
-    LDR     r0, =0xE000E018     ; SysTick_VAL register address
-    MOV     r1, #0
-    STR     r1, [r0]
-
-    ; SysTick_CTRL: Enable SysTick, Enable SysTick Interrupt, Use processor clock
-    ; CTRL bits: 0=ENABLE, 1=TICKINT, 2=CLKSOURCE
-    LDR     r0, =0xE000E010     ; SysTick_CTRL register address
-    MOV     r1, #7              ; (1<<0) | (1<<1) | (1<<2)
-    STR     r1, [r0]
-
-    POP     {r0, r1, PC}        ; Pop registers and return
-
-    ENDP
-
-; delay_ms [register 0 is # of ms]
-; Calibrated for 16MHz clock (adjust R1 literal for different clocks)
+; -----------------------------------------------------------------------------
+; delay_ms: Provides a blocking delay in milliseconds.
+; R0 = number of milliseconds to delay.
+; Calibrated for 16MHz clock (relies on g_ms_ticks incremented by SysTick at 1ms interval).
+; -----------------------------------------------------------------------------
 delay_ms PROC
-    PUSH    {r1, LR}            ; Push r1 and LR for proper context saving
-ms_outer_loop
-    CMP     r0, #0
-    BEQ     ms_done
+    PUSH    {R1, R2, LR}        ; Save R1, R2, and Link Register
 
-    MOV     r1, #8000           ; Calibrated for 16MHz clock to achieve ~1ms delay.
+    MOV     R2, R0              ; Save the desired delay duration (ms) in R2
+    LDR     R1, =g_ms_ticks     ; Load address of g_ms_ticks into R1
+    LDR     R0, [R1]            ; Load current g_ms_ticks into R0 (start_time)
+    ADD     R0, R0, R2          ; Calculate target_time = start_time + delay_ms (R0 now holds target_time)
 
-ms_inner_loop
-    SUBS    r1, r1, #1
-    BNE     ms_inner_loop
+delay_ms_loop
+    LDR     R2, [R1]            ; Load current g_ms_ticks into R2
+    CMP     R2, R0              ; Compare current_time (R2) with target_time (R0)
+    BLT     delay_ms_loop       ; Loop while current_time < target_time
 
-    SUBS    r0, r0, #1
-    B       ms_outer_loop
+    POP     {R1, R2, PC}        ; Restore R1, R2, and return
+	ENDP
 
-ms_done
-    POP     {r1, PC}            ; Pop r1 and PC to restore and return
-    ENDP
-
-; delay_us [optional we probably won't need for such finetuning?]
-; Calibrated for 16MHz clock
+; -----------------------------------------------------------------------------
+; delay_us: Provides a blocking delay in microseconds.
+; R0 = number of microseconds to delay.
+; Calibrated for 16MHz clock (adjust loop count for different clocks).
+; This is a busy-wait loop.
+; -----------------------------------------------------------------------------
 delay_us PROC
-    PUSH    {r1, LR}            ; Push r1 and LR for proper context saving
+    PUSH    {R1, LR}            ; Push R1 and LR for proper context saving
+
 us_outer_loop
-    CMP     r0, #0
-    BEQ     us_done
+    CMP     R0, #0
+    BEQ     us_done             ; If R0 is 0, delay is done
 
-    MOV     r1, #8              ; Calibrated for 16MHz clock to achieve ~1us delay.
-
+    MOV     R1, #8              ; Calibrated for 16MHz clock to achieve ~1us delay.
+                                ; (Each iteration of inner loop takes a few cycles)
 us_inner_loop
-    SUBS    r1, r1, #1
-    BNE     us_inner_loop
+    SUBS    R1, R1, #1          ; Decrement R1
+    BNE     us_inner_loop       ; Loop until R1 is 0
 
-    SUBS    r0, r0, #1
-    B       us_outer_loop
+    SUBS    R0, R0, #1          ; Decrement outer loop counter
+    B       us_outer_loop       ; Loop until R0 is 0
 
 us_done
-    POP     {r1, PC}            ; Pop r1 and PC to restore and return
-    ENDP
+    POP     {R1, PC}            ; Restore R1 and return
+	ENDP
 
 ; -----------------------------------------------------------------------------
-; SysTick_Handler: Increments the global millisecond counter.
-; This needs to be exported and placed in the vector table in your startup file.
+; Get_ms_ticks: Function to make g_ms_ticks accessible from C.
+; Returns the current value of g_ms_ticks in R0.
 ; -----------------------------------------------------------------------------
-    EXPORT  SysTick_Handler
-SysTick_Handler PROC
-    PUSH    {R0, LR}            ; Save R0 and LR
-    LDR     R0, =g_ms_ticks     ; Load address of g_ms_ticks
-    LDR     R1, [R0]            ; Load current value of g_ms_ticks
-    ADD     R1, R1, #1          ; Increment by 1
-    STR     R1, [R0]            ; Store back
-    POP     {R0, PC}            ; Restore R0 and return from interrupt
-    ENDP
+Get_ms_ticks PROC
+    LDR R0, =g_ms_ticks
+    LDR R0, [R0]        ; Load the current tick count into R0 for return
+    BX LR               ; Return to caller (C function)
+	ENDP
+
+
 
 ; --- Global Millisecond Tick Counter ---
-    AREA    |.bss_delay|, NOINIT, READWRITE
+; Keep this single definition for g_ms_ticks in the BSS section
+	AREA    |.bss_delay|, NOINIT, READWRITE
     EXPORT  g_ms_ticks
 g_ms_ticks          DCD     0
     ALIGN
