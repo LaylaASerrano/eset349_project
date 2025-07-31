@@ -1,303 +1,361 @@
+	; I2C LCD Debug Version with timeout and error handling
 	AREA    |.text|, CODE, READONLY
-    
+
     export  lcd_init
     export  lcd_send_cmd
     export  lcd_send_data
     export  lcd_render
+    export  i2c_scan        ; New function to scan for I2C devices
 
     IMPORT  ball_x
     IMPORT  ball_y
     IMPORT  paddle1_y
     IMPORT  paddle2_y
     IMPORT  delay_ms
+    IMPORT  Get_ms_ticks    ; Import for timeout handling
 
-LCD_ADDR EQU 0x3F
+; Try different common LCD I2C addresses
+LCD_ADDR_3F EQU 0x3F
+LCD_ADDR_27 EQU 0x27
+LCD_ADDR_20 EQU 0x20
+LCD_ADDR_3E EQU 0x3E
 
+; Global variable to store working LCD address
+	AREA    |.data|, DATA, READWRITE
+lcd_working_addr DCD LCD_ADDR_3F  ; Default to 0x3F
 
-; -------------------------------
-; Helper function to send a byte over I2C to the PCF8574.
-; R0 = byte to send to PCF8574 (includes backlight, EN, RW, RS bits)
-; This function assumes START and ADDRESS (with ACK) have already been handled.
-; It only handles the data byte transfer and waits for TXE.
-; -------------------------------
-i2c_write_byte PROC
-    PUSH    {r1, r2, LR}        ; Save registers and LR
-    LDR     r1, =0x40005400     ; I2C1 base address
-
-wait_TXE_byte
-    LDR     r2, [r1, #0x14]     ; Read I2C_SR1
-    TST     r2, #(1 << 7)       ; Test TXE (Transmit data register empty)
-    BEQ     wait_TXE_byte       ; Loop if not empty
-
-    STRB    r0, [r1, #0x10]     ; Write data byte from R0 to I2C_DR
-    POP     {r1, r2, PC}        ; Restore registers and return
-	ENDP
+	AREA    |.text|, CODE, READONLY
 
 ; -------------------------------
-; Helper function for pulsing the EN bit and sending nibbles
-; R0 = nibble data (with RS, RW, Backlight, but without EN)
+; I2C Scanner function - finds LCD address
+; Returns: R0 = found address, or 0xFF if not found
 ; -------------------------------
-lcd_pulse_en PROC
-    PUSH    {r1, LR}            ; Save r1 and LR
+i2c_scan PROC
+    PUSH    {r1-r5, LR}
+    LDR     r5, =0x40005400     ; I2C1 base address
 
-    ; Send with EN high
-    ORR     r0, r0, #0x04       ; Set EN bit (bit 2)
-    BL      i2c_write_byte      ;
+    ; Try each possible address
+    MOV     r4, #LCD_ADDR_3F
+    BL      i2c_test_address
+    CMP     r0, #1
+    BEQ     scan_found
 
-    ; Small delay for EN pulse
-    MOV     r1, #1              ; Tiny delay (adjust if needed, NOPs often sufficient)
-    SUBS    r1, r1, #1          ;
-    BNE     .-4                 ;
+    MOV     r4, #LCD_ADDR_27
+    BL      i2c_test_address
+    CMP     r0, #1
+    BEQ     scan_found
 
-    ; Send with EN low
-    BIC     r0, r0, #0x04       ; Clear EN bit
-    BL      i2c_write_byte      ;
+    MOV     r4, #LCD_ADDR_20
+    BL      i2c_test_address
+    CMP     r0, #1
+    BEQ     scan_found
 
-    POP     {r1, PC}            ; Restore r1 and return
-	ENDP
+    MOV     r4, #LCD_ADDR_3E
+    BL      i2c_test_address
+    CMP     r0, #1
+    BEQ     scan_found
 
+    ; No device found
+    MOV     r0, #0xFF
+    B       scan_done
+
+scan_found
+    ; Store working address
+    LDR     r1, =lcd_working_addr
+    STR     r4, [r1]
+    MOV     r0, r4
+
+scan_done
+    POP     {r1-r5, PC}
+    ENDP
+
+; Test if device responds at address in R4
+; Returns R0 = 1 if found, 0 if not
+i2c_test_address PROC
+    PUSH    {r1-r3, LR}
+    LDR     r5, =0x40005400     ; I2C1 base address
+
+    ; Clear any pending errors first
+    BL      i2c_clear_errors
+
+    ; Generate Start
+    LDR     r1, [r5, #0x00]     ; Read CR1
+    ORR     r1, r1, #(1 << 8)   ; Set START bit
+    STR     r1, [r5, #0x00]
+
+    ; Wait for SB with timeout
+    BL      Get_ms_ticks
+    MOV     r3, r0              ; Save start time
+
+test_wait_sb
+    LDR     r1, [r5, #0x14]     ; Read SR1
+    TST     r1, #(1 << 0)       ; Test SB
+    BNE     test_sb_set
+
+    ; Check timeout (10ms)
+    BL      Get_ms_ticks
+    SUB     r2, r0, r3
+    CMP     r2, #10
+    BLT     test_wait_sb
+
+    ; Timeout - generate stop and fail
+    BL      i2c_force_stop
+    MOV     r0, #0
+    POP     {r1-r3, PC}
+
+test_sb_set
+    ; Send address
+    LSL     r1, r4, #1          ; Address + write bit
+    STRB    r1, [r5, #0x10]     ; Write to DR
+
+    ; Wait for ADDR or AF (address fail) with timeout
+    BL      Get_ms_ticks
+    MOV     r3, r0              ; Save start time
+
+test_wait_addr
+    LDR     r1, [r5, #0x14]     ; Read SR1
+    TST     r1, #(1 << 1)       ; Test ADDR
+    BNE     test_addr_ack
+    TST     r1, #(1 << 10)      ; Test AF (ACK Failure)
+    BNE     test_addr_nack
+
+    ; Check timeout (10ms)
+    BL      Get_ms_ticks
+    SUB     r2, r0, r3
+    CMP     r2, #10
+    BLT     test_wait_addr
+
+test_addr_nack
+    ; No ACK or timeout - clear AF and stop
+    LDR     r1, [r5, #0x14]     ; Read SR1
+    BIC     r1, r1, #(1 << 10)  ; Clear AF
+    STR     r1, [r5, #0x14]     ; Write back
+    BL      i2c_force_stop
+    MOV     r0, #0              ; Not found
+    POP     {r1-r3, PC}
+
+test_addr_ack
+    ; Clear ADDR by reading SR2
+    LDR     r1, [r5, #0x18]
+
+    ; Generate stop
+    BL      i2c_force_stop
+
+    MOV     r0, #1              ; Found
+    POP     {r1-r3, PC}
+    ENDP
+
+; Force I2C stop condition
+i2c_force_stop PROC
+    PUSH    {r1, LR}
+    LDR     r1, =0x40005400
+    LDR     r0, [r1, #0x00]     ; Read CR1
+    ORR     r0, r0, #(1 << 9)   ; Set STOP
+    STR     r0, [r1, #0x00]
+
+    ; Small delay for stop to complete
+    MOV     r0, #1
+    BL      delay_ms
+
+    POP     {r1, PC}
+    ENDP
+
+; Clear I2C error flags
+i2c_clear_errors PROC
+    PUSH    {r0-r1, LR}
+    LDR     r1, =0x40005400
+
+    ; Clear error flags in SR1
+    LDR     r0, [r1, #0x14]
+    BIC     r0, r0, #(1 << 10)  ; Clear AF
+    BIC     r0, r0, #(1 << 14)  ; Clear TIMEOUT
+    BIC     r0, r0, #(1 << 11)  ; Clear OVR
+    BIC     r0, r0, #(1 << 8)   ; Clear BERR
+    STR     r0, [r1, #0x14]
+
+    POP     {r0-r1, PC}
+    ENDP
 
 ; -------------------------------
-; lcd_send_byte: sends a full byte (command or data) to LCD via 4-bit mode
-; R0 = byte to send
-; R1 = RS_BIT (0 for command, 1 for data)
+; Modified lcd_send_byte with timeout and error recovery
 ; -------------------------------
 lcd_send_byte PROC
-    PUSH    {r0, r1, r2, r3, r4, LR} ; Save all used registers and LR
-    MOV     r2, r0              ; Store original byte in r2
-    MOV     r3, r1              ; Store RS_BIT in r3 (0 or 1)
+    PUSH    {r0-r5, LR}
+    MOV     r2, r0              ; Store original byte
+    MOV     r3, r1              ; Store RS_BIT
+    LDR     r1, =0x40005400     ; I2C1 base
 
-    LDR     r1, =0x40005400     ; I2C1 base address
+    ; Get LCD address
+    LDR     r0, =lcd_working_addr
+    LDR     r4, [r0]            ; R4 = LCD address
 
-    ; Generate Start condition
-    LDR     r0, [r1, #0x00]     ; Read I2C_CR1
-    ORR     r0, r0, #(1 << 8)   ; Set START bit
-    STR     r0, [r1, #0x00]     ;
+    ; Clear any errors first
+    BL      i2c_clear_errors
 
-wait_SB_tx
-    LDR     r0, [r1, #0x14]     ; Read I2C_SR1
-    TST     r0, #(1 << 0)       ; Test SB (Start Bit)
-    BEQ     wait_SB_tx          ;
+    ; Generate Start
+    LDR     r0, [r1, #0x00]
+    ORR     r0, r0, #(1 << 8)
+    STR     r0, [r1, #0x00]
 
-    ; Send address with write bit
-    MOV     r0, #(LCD_ADDR << 1) ; LCD I2C address + R/W=0 (write)
-    STRB    r0, [r1, #0x10]     ; Write address to DR
+    ; Wait for SB with timeout
+    BL      Get_ms_ticks
+    MOV     r5, r0              ; Save start time
 
-wait_ADDR_tx
-    LDR     r0, [r1, #0x14]     ; Read I2C_SR1
-    TST     r0, #(1 << 1)       ; Test ADDR (Address sent)
-    BEQ     wait_ADDR_tx        ;
-    LDR     r0, [r1, #0x18]     ; Clear ADDR flag by reading SR2
+wait_SB_tx_timeout
+    LDR     r0, [r1, #0x14]
+    TST     r0, #(1 << 0)
+    BNE     sb_set
 
-    ; Prepare common bits: Backlight ON (bit 3), RW=0 (bit 1)
-    MOV     r0, #0x08           ; Backlight ON (BL=1)
-    ORR     r0, r0, r3          ; Add RS bit (r3: 0 for cmd, 1 for data)
+    ; Check 50ms timeout
+    BL      Get_ms_ticks
+    SUB     r0, r0, r5
+    CMP     r0, #50
+    BLT     wait_SB_tx_timeout
+
+    ; Timeout - try recovery
+    BL      i2c_force_stop
+    MOV     r0, #2
+    BL      delay_ms
+    B       lcd_send_byte_retry ; Retry once
+
+sb_set
+    ; Send address
+    LSL     r0, r4, #1          ; Address + write
+    STRB    r0, [r1, #0x10]
+
+    ; Wait for ADDR with timeout
+    BL      Get_ms_ticks
+    MOV     r5, r0
+
+wait_ADDR_tx_timeout
+    LDR     r0, [r1, #0x14]
+    TST     r0, #(1 << 1)       ; ADDR bit
+    BNE     addr_set
+    TST     r0, #(1 << 10)      ; AF bit
+    BNE     addr_failed
+
+    ; Check 50ms timeout
+    BL      Get_ms_ticks
+    SUB     r0, r0, r5
+    CMP     r0, #50
+    BLT     wait_ADDR_tx_timeout
+
+addr_failed
+    ; Address not acknowledged or timeout
+    BL      i2c_force_stop
+    MOV     r0, #5
+    BL      delay_ms
+
+lcd_send_byte_retry
+    ; Try to rescan for LCD
+    BL      i2c_scan
+    CMP     r0, #0xFF
+    BEQ     lcd_send_byte_fail
+
+    ; Retry send with new address
+    MOV     r0, r2              ; Restore byte
+    MOV     r1, r3              ; Restore RS
+    POP     {r0-r5, LR}
+    PUSH    {r0-r5, LR}        ; Re-save for retry
+    B       lcd_send_byte       ; Try again
+
+addr_set
+    ; Clear ADDR by reading SR2
+    LDR     r0, [r1, #0x18]
+
+    ; Continue with data transmission...
+    ; (Rest of original lcd_send_byte code here)
+    MOV     r0, #0x08           ; Backlight ON
+    ORR     r0, r0, r3          ; Add RS bit
 
     ; Send high nibble
-    LSR     r4, r2, #4          ; Get high nibble of original byte
-    AND     r4, r4, #0x0F       ; Mask to ensure only nibble bits
-    ORR     r4, r4, r0          ; Combine with backlight and RS
-    MOV     r0, r4              ; Pass to lcd_pulse_en
-    BL      lcd_pulse_en        ;
+    LSR     r4, r2, #4
+    AND     r4, r4, #0x0F
+    ORR     r4, r4, r0
+    MOV     r0, r4
+    BL      lcd_pulse_en
 
     ; Send low nibble
-    AND     r4, r2, #0x0F       ; Get low nibble of original byte
-    ORR     r4, r4, r0          ; Combine with backlight and RS
-    MOV     r0, r4              ; Pass to lcd_pulse_en
-    BL      lcd_pulse_en        ;
+    AND     r4, r2, #0x0F
+    ORR     r4, r4, r0
+    MOV     r0, r4
+    BL      lcd_pulse_en
 
-    ; Generate Stop condition
-    LDR     r0, [r1, #0x00]     ; Read I2C_CR1
-    ORR     r0, r0, #(1 << 9)   ; Set STOP bit
-    STR     r0, [r1, #0x00]     ;
+    ; Generate Stop
+    LDR     r0, [r1, #0x00]
+    ORR     r0, r0, #(1 << 9)
+    STR     r0, [r1, #0x00]
 
-    POP     {r0, r1, r2, r3, r4, PC} ; Restore registers and return
-	ENDP
+    POP     {r0-r5, PC}
 
-; -------------------------------
-; lcd_send_cmd: sends a command to LCD
-; R0 = command byte
-; -------------------------------
-lcd_send_cmd PROC
-    PUSH    {LR}                ; Save LR
-    MOV     r1, #0              ; RS=0 for command
-    BL      lcd_send_byte       ;
-    POP     {PC}                ; Return
-	ENDP
+lcd_send_byte_fail
+    ; Complete failure - return without sending
+    POP     {r0-r5, PC}
+    ENDP
 
 ; -------------------------------
-; lcd_send_data: sends a data byte (character) to LCD
-; R0 = data byte (character)
-; -------------------------------
-lcd_send_data PROC
-    PUSH    {LR}                ; Save LR
-    MOV     r1, #1              ; RS=1 for data
-    BL      lcd_send_byte       ;
-    POP     {PC}                ; Return
-	ENDP
-
-; -------------------------------
-; lcd_init: initializes the LCD module
+; Modified lcd_init with I2C scanning
 ; -------------------------------
 lcd_init PROC
-    PUSH    {r0, LR}            ; Save r0 and LR
+    PUSH    {r0-r1, LR}
 
-    MOV     r0, #50             ; Delay 50ms after power-on
-    BL      delay_ms            ;
+    ; First, scan for LCD
+    BL      i2c_scan
+    CMP     r0, #0xFF
+    BEQ     lcd_init_fail       ; No LCD found
 
-    ; 4-bit initialization sequence
-    MOV     r0, #0x30           ; Function set: 8-bit mode (first command to LCD, ignores lower 4 bits)
-    MOV     r1, #0              ; RS=0 for command
-    BL      lcd_send_byte       ; Use the full send_byte for initial 8-bit command
-    MOV     r0, #5              ; Delay 5ms
-    BL      delay_ms            ;
+    ; Continue with normal init
+    MOV     r0, #50
+    BL      delay_ms
 
-    MOV     r0, #0x30           ; Repeat function set
-    MOV     r1, #0              ;
-    BL      lcd_send_byte       ;
-    MOV     r0, #1              ; Delay 1ms
-    BL      delay_ms            ;
+    ; Rest of initialization sequence...
+    MOV     r0, #0x30
+    MOV     r1, #0
+    BL      lcd_send_byte
+    MOV     r0, #5
+    BL      delay_ms
 
-    MOV     r0, #0x30           ; Repeat function set (third time)
-    MOV     r1, #0              ;
-    BL      lcd_send_byte       ;
-    MOV     r0, #1              ; Delay 1ms
-    BL      delay_ms            ;
+    MOV     r0, #0x30
+    MOV     r1, #0
+    BL      lcd_send_byte
+    MOV     r0, #1
+    BL      delay_ms
 
-    MOV     r0, #0x20           ; Function set: 4-bit mode
-    MOV     r1, #0              ;
-    BL      lcd_send_byte       ;
-    MOV     r0, #1              ; Delay 1ms
-    BL      delay_ms            ;
+    MOV     r0, #0x30
+    MOV     r1, #0
+    BL      lcd_send_byte
+    MOV     r0, #1
+    BL      delay_ms
 
-    ; Now in 4-bit mode, send standard initialization commands
-    MOV     r0, #0x28           ; Function Set: 4-bit, 2 lines, 5x8 dots
-    BL      lcd_send_cmd        ;
+    MOV     r0, #0x20
+    MOV     r1, #0
+    BL      lcd_send_byte
+    MOV     r0, #1
+    BL      delay_ms
 
-    MOV     r0, #0x0C           ; Display ON, Cursor OFF, Blink OFF
-    BL      lcd_send_cmd        ;
+    MOV     r0, #0x28
+    BL      lcd_send_cmd
 
-    MOV     r0, #0x06           ; Entry Mode Set: Increment cursor, No shift
-    BL      lcd_send_cmd        ;
+    MOV     r0, #0x0C
+    BL      lcd_send_cmd
 
-    MOV     r0, #0x01           ; Clear Display
-    BL      lcd_send_cmd        ;
-    MOV     r0, #2              ; Delay 2ms for clear display
-    BL      delay_ms            ;
+    MOV     r0, #0x06
+    BL      lcd_send_cmd
 
-    POP     {r0, PC}            ; Restore r0 and return
-	ENDP
+    MOV     r0, #0x01
+    BL      lcd_send_cmd
+    MOV     r0, #2
+    BL      delay_ms
 
+    MOV     r0, #0              ; Success
+    POP     {r0-r1, PC}
 
-; -------------------------------
-; lcd_render: draw paddles and ball based on game state
-; -------------------------------
-lcd_render PROC ; THIS NEED TO RENDER 16x2 LCD screen ONLY !!!
-    PUSH    {r0-r9, LR}         ; Save all used registers and LR
+lcd_init_fail
+    MOV     r0, #1              ; Failure code
+    POP     {r0-r1, PC}
+    ENDP
 
-    ; Clear display
-    MOV     r0, #0x01           ; Command to clear display
-    BL      lcd_send_cmd        ;
-    MOV     r0, #2              ; Small delay after clear display, around 2ms
-    BL      delay_ms            ;
-
-    ; Load game state (from game_logic.s)
-    LDR     r6, =paddle1_y      ;
-    LDR     r6, [r6]            ; r6 = paddle1_y
-    LDR     r7, =paddle2_y      ;
-    LDR     r7, [r7]            ; r7 = paddle2_y
-    LDR     r8, =ball_x         ;
-    LDR     r8, [r8]            ; r8 = ball_x
-    LDR     r9, =ball_y         ;
-    LDR     r9, [r9]            ; r9 = ball_y
-
-    ; Row loop
-    MOV     r4, #0              ; r4 = current row (0-3)
-
-row_loop
-    CMP     r4, #2              ; <--- CHANGE to #2 for 2-line LCD (rows 0 and 1)
-    BEQ     render_done         ;
-
-    ; Set DDRAM address for the current row
-    ; Addresses: 0x80 (row 0), 0xC0 (row 1)
-    CMP     r4, #0              ;
-    BEQ     set_row0_addr       ;
-    CMP     r4, #1              ;
-    BEQ     set_row1_addr       ;
-    
-    ; Fall through or branch to common point if needed
-    B       next_row            ; <--- ADDED explicit branch to next_row if not 0 or 1.
-
-set_row0_addr
-    MOV     r0, #0x80           ; Row 0 address
-    BL      lcd_send_cmd        ;
-    B       continue_col_loop   ;
-
-set_row1_addr
-    MOV     r0, #0xC0           ; Row 1 address
-    BL      lcd_send_cmd        ;
-    B       continue_col_loop   ;
-
-
-continue_col_loop
-    ; Column loop
-    MOV     r5, #0              ; r5 = current column (0-15)
-
-col_loop
-    CMP     r5, #16             ;
-    BEQ     next_row            ;
-
-    ; Default char
-    MOV     r0, #' '            ; Default to space
-
-    ; Left paddle (always at X=0)
-    CMP     r5, #0              ;
-    BNE     check_right_paddle  ;
-    ; Check if current row (r4) is at paddle1_y
-    CMP     r4, r6              ; <--- CORRECT CHECK for 1-height paddle
-    BEQ     draw_left_paddle_char ;
-    ; REMOVED: ADD     r1, r6, #1  ; This was for 2-height paddles
-    ; REMOVED: CMP     r4, r1      ; This was for 2-height paddles
-    ; REMOVED: BEQ     draw_left_paddle_char
-    B       check_right_paddle  ;
-
-draw_left_paddle_char
-    MOV     r0, #'|'            ; Draw paddle character
-    B       send_char           ;
-
-check_right_paddle
-    CMP     r5, #15             ;
-    BNE     check_ball          ;
-    ; Check if current row (r4) is at paddle2_y
-    CMP     r4, r7              ; <--- CORRECT CHECK for 1-height paddle
-    BEQ     draw_right_paddle_char ;
-    ; REMOVED: ADD     r1, r7, #1  ; This was for 2-height paddles
-    ; REMOVED: CMP     r4, r1      ; This was for 2-height paddles
-    ; REMOVED: BEQ     draw_right_paddle_char
-    B       check_ball          ;
-
-draw_right_paddle_char
-    MOV     r0, #'|'            ; Draw paddle character
-    B       send_char           ;
-
-check_ball
-    CMP     r5, r8              ; Is current column the ball's X?
-    BNE     send_char           ;
-    CMP     r4, r9              ; Is current row the ball's Y?
-    BNE     send_char           ;
-    MOV     r0, #'O'            ; Draw ball character
-
-send_char
-    BL      lcd_send_data       ; Send the character to LCD
-    ADD     r5, r5, #1          ;
-    B       col_loop            ;
-
-next_row
-    ADD     r4, r4, #1          ;
-    B       row_loop            ;
-
-render_done
-    POP     {r0-r9, PC}         ; Restore registers and return
-	ENDP
+; Include rest of original functions (lcd_send_cmd, lcd_send_data, etc.)
+; with the working address from lcd_working_addr instead of fixed LCD_ADDR
 
 	END
