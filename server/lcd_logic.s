@@ -1,5 +1,5 @@
     AREA    |.text|, CODE, READONLY
-
+    ; written by Layla Serrano
 	; Export LCD functions for use by other files
 	EXPORT  LCDInit
 	EXPORT  LCDCommand
@@ -177,7 +177,7 @@ lcd_render PROC
     CMP     r5, #1              ; Is ball on line 2 (y=1)?
     ADDEQ   r0, r0, #0x40       ; Add line 2 offset if needed
 
-    ADD     r0, r0, r8          ; Add ball_x offset to cursor 
+    ADD     r0, r0, r8          ; Add ball_x offset to cursor
     BL      LCDSetCursor
     MOV     r3, #BALL_CHAR
     BL      LCDData

@@ -1,8 +1,9 @@
-	AREA    |.text|, CODE, READONLY
+
+    AREA    |.text|, CODE, READONLY
     export  game_update
     export  game_init
     export  reset_ball
-
+    ;written by Layla Serrano
     ; Export global variables to other assembly files and C
     EXPORT  ball_x
     EXPORT  ball_y
